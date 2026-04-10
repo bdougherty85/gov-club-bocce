@@ -11,26 +11,51 @@ import toast from 'react-hot-toast';
 interface Team {
   id: string;
   name: string;
-  division: { name: string };
+  division: { id: string; name: string };
 }
 
 interface Game {
   id: string;
   scheduledDate: string;
-  homeTeam: Team;
-  awayTeam: Team;
+  homeTeam: Team | null;
+  awayTeam: Team | null;
   homeScore: number | null;
   awayScore: number | null;
   status: string;
   scoreboardPhoto: string | null;
   notes: string | null;
   isPlayoff: boolean;
+  court?: { id: string; name: string } | null;
+  timeSlot?: { id: string; startTime: string; endTime: string } | null;
+}
+
+interface Court {
+  id: string;
+  name: string;
+}
+
+interface TimeSlot {
+  id: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+}
+
+interface Season {
+  id: string;
+  name: string;
+  isActive: boolean;
 }
 
 export default function GamesPage() {
   const [games, setGames] = useState<Game[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [courts, setCourts] = useState<Court[]>([]);
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
+  const [seasons, setSeasons] = useState<Season[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [filter, setFilter] = useState('all');
   const [formData, setFormData] = useState({
@@ -38,6 +63,14 @@ export default function GamesPage() {
     awayScore: '',
     status: 'completed',
     notes: '',
+  });
+  const [createFormData, setCreateFormData] = useState({
+    homeTeamId: '',
+    awayTeamId: '',
+    scheduledDate: '',
+    courtId: '',
+    timeSlotId: '',
+    seasonId: '',
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,8 +87,38 @@ export default function GamesPage() {
     }
   };
 
+  const fetchFormData = async () => {
+    try {
+      const [teamsRes, courtsRes, timeSlotsRes, seasonsRes] = await Promise.all([
+        fetch('/api/teams'),
+        fetch('/api/courts'),
+        fetch('/api/timeslots'),
+        fetch('/api/seasons'),
+      ]);
+      const [teamsData, courtsData, timeSlotsData, seasonsData] = await Promise.all([
+        teamsRes.json(),
+        courtsRes.json(),
+        timeSlotsRes.json(),
+        seasonsRes.json(),
+      ]);
+      setTeams(teamsData);
+      setCourts(courtsData);
+      setTimeSlots(timeSlotsData);
+      setSeasons(seasonsData);
+
+      // Set default season to active one
+      const activeSeason = seasonsData.find((s: Season) => s.isActive);
+      if (activeSeason) {
+        setCreateFormData((prev) => ({ ...prev, seasonId: activeSeason.id }));
+      }
+    } catch (error) {
+      console.error('Failed to load form data');
+    }
+  };
+
   useEffect(() => {
     fetchGames();
+    fetchFormData();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -139,8 +202,8 @@ export default function GamesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrl,
-          homeTeamName: selectedGame.homeTeam.name,
-          awayTeamName: selectedGame.awayTeam.name,
+          homeTeamName: selectedGame.homeTeam?.name ?? 'Home Team',
+          awayTeamName: selectedGame.awayTeam?.name ?? 'Away Team',
         }),
       });
 
@@ -193,6 +256,60 @@ export default function GamesPage() {
     setModalOpen(true);
   };
 
+  const handleCreateGame = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (createFormData.homeTeamId === createFormData.awayTeamId) {
+      toast.error('Home and away teams must be different');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/games', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          homeTeamId: createFormData.homeTeamId,
+          awayTeamId: createFormData.awayTeamId,
+          scheduledDate: createFormData.scheduledDate,
+          courtId: createFormData.courtId || null,
+          timeSlotId: createFormData.timeSlotId || null,
+          seasonId: createFormData.seasonId,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to create game');
+
+      toast.success('Game created!');
+      setCreateModalOpen(false);
+      setCreateFormData({
+        homeTeamId: '',
+        awayTeamId: '',
+        scheduledDate: '',
+        courtId: '',
+        timeSlotId: '',
+        seasonId: createFormData.seasonId, // Keep season selection
+      });
+      fetchGames();
+    } catch (error) {
+      toast.error('Failed to create game');
+    }
+  };
+
+  const handleDeleteGame = async (gameId: string) => {
+    if (!confirm('Are you sure you want to delete this game? This cannot be undone.')) return;
+
+    try {
+      const res = await fetch(`/api/games/${gameId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete game');
+
+      toast.success('Game deleted');
+      fetchGames();
+    } catch (error) {
+      toast.error('Failed to delete game');
+    }
+  };
+
   const filteredGames = games.filter((game) => {
     if (filter === 'all') return true;
     if (filter === 'scheduled') return game.status === 'scheduled';
@@ -231,6 +348,7 @@ export default function GamesPage() {
           <h1 className="text-3xl font-bold text-foreground">Games & Scores</h1>
           <p className="text-muted mt-1">Manage game scores and upload scoreboard photos</p>
         </div>
+        <Button onClick={() => setCreateModalOpen(true)}>Add Game</Button>
       </div>
 
       {/* Filters */}
@@ -280,8 +398,8 @@ export default function GamesPage() {
 
                   <div className="flex items-center justify-between md:justify-start gap-4">
                     <div className="text-center md:text-left">
-                      <p className="font-semibold text-lg text-foreground">{game.homeTeam.name}</p>
-                      <p className="text-xs text-muted">{game.homeTeam.division.name}</p>
+                      <p className="font-semibold text-lg text-foreground">{game.homeTeam?.name ?? 'TBD'}</p>
+                      <p className="text-xs text-muted">{game.homeTeam?.division?.name ?? ''}</p>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -301,8 +419,8 @@ export default function GamesPage() {
                     </div>
 
                     <div className="text-center md:text-right">
-                      <p className="font-semibold text-lg text-foreground">{game.awayTeam.name}</p>
-                      <p className="text-xs text-muted">{game.awayTeam.division.name}</p>
+                      <p className="font-semibold text-lg text-foreground">{game.awayTeam?.name ?? 'TBD'}</p>
+                      <p className="text-xs text-muted">{game.awayTeam?.division?.name ?? ''}</p>
                     </div>
                   </div>
 
@@ -325,6 +443,13 @@ export default function GamesPage() {
                   <Button size="sm" onClick={() => openScoreModal(game)}>
                     {game.status === 'completed' ? 'Edit Score' : 'Enter Score'}
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => handleDeleteGame(game.id)}
+                  >
+                    Delete
+                  </Button>
                 </div>
               </div>
             </Card>
@@ -336,7 +461,7 @@ export default function GamesPage() {
       <Modal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={selectedGame ? `${selectedGame.homeTeam.name} vs ${selectedGame.awayTeam.name}` : ''}
+        title={selectedGame ? `${selectedGame.homeTeam?.name ?? 'TBD'} vs ${selectedGame.awayTeam?.name ?? 'TBD'}` : ''}
         size="lg"
       >
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -344,7 +469,7 @@ export default function GamesPage() {
           <div className="grid grid-cols-3 gap-4 items-end">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">
-                {selectedGame?.homeTeam.name}
+                {selectedGame?.homeTeam?.name ?? 'Home Team'}
               </label>
               <Input
                 type="number"
@@ -357,7 +482,7 @@ export default function GamesPage() {
             <div className="text-center text-2xl text-muted font-bold pb-2">-</div>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">
-                {selectedGame?.awayTeam.name}
+                {selectedGame?.awayTeam?.name ?? 'Away Team'}
               </label>
               <Input
                 type="number"
@@ -452,6 +577,98 @@ export default function GamesPage() {
               Cancel
             </Button>
             <Button type="submit">Save Score</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Create Game Modal */}
+      <Modal
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        title="Add New Game"
+        size="lg"
+      >
+        <form onSubmit={handleCreateGame} className="space-y-4">
+          <Select
+            label="Season"
+            value={createFormData.seasonId}
+            onChange={(e) => setCreateFormData({ ...createFormData, seasonId: e.target.value })}
+            options={[
+              { value: '', label: 'Select a season...' },
+              ...seasons.map((s) => ({
+                value: s.id,
+                label: `${s.name}${s.isActive ? ' (Active)' : ''}`,
+              })),
+            ]}
+            required
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Home Team"
+              value={createFormData.homeTeamId}
+              onChange={(e) => setCreateFormData({ ...createFormData, homeTeamId: e.target.value })}
+              options={[
+                { value: '', label: 'Select team...' },
+                ...teams.map((t) => ({
+                  value: t.id,
+                  label: `${t.name} (${t.division.name})`,
+                })),
+              ]}
+              required
+            />
+            <Select
+              label="Away Team"
+              value={createFormData.awayTeamId}
+              onChange={(e) => setCreateFormData({ ...createFormData, awayTeamId: e.target.value })}
+              options={[
+                { value: '', label: 'Select team...' },
+                ...teams.map((t) => ({
+                  value: t.id,
+                  label: `${t.name} (${t.division.name})`,
+                })),
+              ]}
+              required
+            />
+          </div>
+
+          <Input
+            label="Scheduled Date"
+            type="date"
+            value={createFormData.scheduledDate}
+            onChange={(e) => setCreateFormData({ ...createFormData, scheduledDate: e.target.value })}
+            required
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Court (Optional)"
+              value={createFormData.courtId}
+              onChange={(e) => setCreateFormData({ ...createFormData, courtId: e.target.value })}
+              options={[
+                { value: '', label: 'No specific court' },
+                ...courts.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <Select
+              label="Time Slot (Optional)"
+              value={createFormData.timeSlotId}
+              onChange={(e) => setCreateFormData({ ...createFormData, timeSlotId: e.target.value })}
+              options={[
+                { value: '', label: 'No specific time' },
+                ...timeSlots.map((ts) => ({
+                  value: ts.id,
+                  label: `${ts.startTime} - ${ts.endTime}`,
+                })),
+              ]}
+            />
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4 border-t border-border">
+            <Button type="button" variant="outline" onClick={() => setCreateModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Create Game</Button>
           </div>
         </form>
       </Modal>

@@ -40,6 +40,8 @@ export default function SchedulePage() {
   const [timeSlotModalOpen, setTimeSlotModalOpen] = useState(false);
   const [courtModalOpen, setCourtModalOpen] = useState(false);
   const [autoScheduleModalOpen, setAutoScheduleModalOpen] = useState(false);
+  const [editingTimeSlot, setEditingTimeSlot] = useState<TimeSlot | null>(null);
+  const [editingCourt, setEditingCourt] = useState<Court | null>(null);
   const [timeSlotFormData, setTimeSlotFormData] = useState({
     dayOfWeek: '1',
     startTime: '18:00',
@@ -86,8 +88,13 @@ export default function SchedulePage() {
     e.preventDefault();
 
     try {
-      const res = await fetch('/api/timeslots', {
-        method: 'POST',
+      const url = editingTimeSlot
+        ? `/api/timeslots/${editingTimeSlot.id}`
+        : '/api/timeslots';
+      const method = editingTimeSlot ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dayOfWeek: parseInt(timeSlotFormData.dayOfWeek),
@@ -97,14 +104,13 @@ export default function SchedulePage() {
         }),
       });
 
-      if (!res.ok) throw new Error('Failed to create time slot');
+      if (!res.ok) throw new Error('Failed to save time slot');
 
-      toast.success('Time slot created!');
-      setTimeSlotModalOpen(false);
-      setTimeSlotFormData({ dayOfWeek: '1', startTime: '18:00', endTime: '21:00', courtId: '' });
+      toast.success(editingTimeSlot ? 'Time slot updated!' : 'Time slot created!');
+      closeTimeSlotModal();
       fetchData();
     } catch (error) {
-      toast.error('Failed to create time slot');
+      toast.error('Failed to save time slot');
     }
   };
 
@@ -112,21 +118,57 @@ export default function SchedulePage() {
     e.preventDefault();
 
     try {
-      const res = await fetch('/api/courts', {
-        method: 'POST',
+      const url = editingCourt
+        ? `/api/courts/${editingCourt.id}`
+        : '/api/courts';
+      const method = editingCourt ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(courtFormData),
       });
 
-      if (!res.ok) throw new Error('Failed to create court');
+      if (!res.ok) throw new Error('Failed to save court');
 
-      toast.success('Court created!');
-      setCourtModalOpen(false);
-      setCourtFormData({ name: '', location: '' });
+      toast.success(editingCourt ? 'Court updated!' : 'Court created!');
+      closeCourtModal();
       fetchData();
     } catch (error) {
-      toast.error('Failed to create court');
+      toast.error('Failed to save court');
     }
+  };
+
+  const openEditTimeSlot = (slot: TimeSlot) => {
+    setEditingTimeSlot(slot);
+    setTimeSlotFormData({
+      dayOfWeek: slot.dayOfWeek.toString(),
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      courtId: slot.court?.id || '',
+    });
+    setTimeSlotModalOpen(true);
+  };
+
+  const openEditCourt = (court: Court) => {
+    setEditingCourt(court);
+    setCourtFormData({
+      name: court.name,
+      location: court.location || '',
+    });
+    setCourtModalOpen(true);
+  };
+
+  const closeTimeSlotModal = () => {
+    setTimeSlotModalOpen(false);
+    setEditingTimeSlot(null);
+    setTimeSlotFormData({ dayOfWeek: '1', startTime: '18:00', endTime: '21:00', courtId: '' });
+  };
+
+  const closeCourtModal = () => {
+    setCourtModalOpen(false);
+    setEditingCourt(null);
+    setCourtFormData({ name: '', location: '' });
   };
 
   const handleAutoSchedule = async (e: React.FormEvent) => {
@@ -225,9 +267,14 @@ export default function SchedulePage() {
                       <p className="font-medium text-foreground">{court.name}</p>
                       {court.location && <p className="text-sm text-muted">{court.location}</p>}
                     </div>
-                    <Button size="sm" variant="danger" onClick={() => handleDeleteCourt(court.id)}>
-                      Delete
-                    </Button>
+                    <div className="flex space-x-2">
+                      <Button size="sm" variant="outline" onClick={() => openEditCourt(court)}>
+                        Edit
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => handleDeleteCourt(court.id)}>
+                        Delete
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -260,13 +307,22 @@ export default function SchedulePage() {
                                   <p className="text-sm text-muted">{slot.court.name}</p>
                                 )}
                               </div>
-                              <Button
-                                size="sm"
-                                variant="danger"
-                                onClick={() => handleDeleteTimeSlot(slot.id)}
-                              >
-                                Delete
-                              </Button>
+                              <div className="flex space-x-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openEditTimeSlot(slot)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="danger"
+                                  onClick={() => handleDeleteTimeSlot(slot.id)}
+                                >
+                                  Delete
+                                </Button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -279,11 +335,11 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {/* Add Time Slot Modal */}
+      {/* Time Slot Modal */}
       <Modal
         isOpen={timeSlotModalOpen}
-        onClose={() => setTimeSlotModalOpen(false)}
-        title="Add Time Slot"
+        onClose={closeTimeSlotModal}
+        title={editingTimeSlot ? 'Edit Time Slot' : 'Add Time Slot'}
       >
         <form onSubmit={handleTimeSlotSubmit} className="space-y-4">
           <Select
@@ -319,19 +375,19 @@ export default function SchedulePage() {
             ]}
           />
           <div className="flex justify-end space-x-3 pt-4">
-            <Button type="button" variant="outline" onClick={() => setTimeSlotModalOpen(false)}>
+            <Button type="button" variant="outline" onClick={closeTimeSlotModal}>
               Cancel
             </Button>
-            <Button type="submit">Add Time Slot</Button>
+            <Button type="submit">{editingTimeSlot ? 'Save Changes' : 'Add Time Slot'}</Button>
           </div>
         </form>
       </Modal>
 
-      {/* Add Court Modal */}
+      {/* Court Modal */}
       <Modal
         isOpen={courtModalOpen}
-        onClose={() => setCourtModalOpen(false)}
-        title="Add Court"
+        onClose={closeCourtModal}
+        title={editingCourt ? 'Edit Court' : 'Add Court'}
       >
         <form onSubmit={handleCourtSubmit} className="space-y-4">
           <Input
@@ -348,10 +404,10 @@ export default function SchedulePage() {
             placeholder="e.g., North side"
           />
           <div className="flex justify-end space-x-3 pt-4">
-            <Button type="button" variant="outline" onClick={() => setCourtModalOpen(false)}>
+            <Button type="button" variant="outline" onClick={closeCourtModal}>
               Cancel
             </Button>
-            <Button type="submit">Add Court</Button>
+            <Button type="submit">{editingCourt ? 'Save Changes' : 'Add Court'}</Button>
           </div>
         </form>
       </Modal>

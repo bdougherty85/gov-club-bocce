@@ -50,6 +50,7 @@ export default function DivisionsPage() {
     isActive: true,
   });
   const [selectedTimeSlotId, setSelectedTimeSlotId] = useState('');
+  const [editingSeason, setEditingSeason] = useState<Season | null>(null);
 
   const fetchData = async () => {
     try {
@@ -106,21 +107,54 @@ export default function DivisionsPage() {
     e.preventDefault();
 
     try {
-      const res = await fetch('/api/seasons', {
-        method: 'POST',
+      const url = editingSeason ? `/api/seasons/${editingSeason.id}` : '/api/seasons';
+      const method = editingSeason ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(seasonFormData),
       });
 
-      if (!res.ok) throw new Error('Failed to create season');
+      if (!res.ok) throw new Error('Failed to save season');
 
-      toast.success('Season created!');
-      setSeasonModalOpen(false);
-      setSeasonFormData({ name: '', startDate: '', endDate: '', isActive: true });
+      toast.success(editingSeason ? 'Season updated!' : 'Season created!');
+      closeSeasonModal();
       fetchData();
     } catch (error) {
-      toast.error('Failed to create season');
+      toast.error('Failed to save season');
     }
+  };
+
+  const handleDeleteSeason = async (seasonId: string) => {
+    if (!confirm('Are you sure you want to delete this season? This will also delete all divisions and games in this season.')) return;
+
+    try {
+      const res = await fetch(`/api/seasons/${seasonId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete season');
+
+      toast.success('Season deleted');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to delete season');
+    }
+  };
+
+  const openEditSeasonModal = (season: Season) => {
+    setEditingSeason(season);
+    setSeasonFormData({
+      name: season.name,
+      startDate: season.startDate.split('T')[0],
+      endDate: season.endDate.split('T')[0],
+      isActive: season.isActive,
+    });
+    setSeasonModalOpen(true);
+  };
+
+  const closeSeasonModal = () => {
+    setSeasonModalOpen(false);
+    setEditingSeason(null);
+    setSeasonFormData({ name: '', startDate: '', endDate: '', isActive: true });
   };
 
   const handleDelete = async (id: string) => {
@@ -231,7 +265,7 @@ export default function DivisionsPage() {
                   season.isActive ? 'border-primary bg-primary/5' : 'border-border'
                 }`}
               >
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start mb-2">
                   <div>
                     <h4 className="font-semibold text-foreground">{season.name}</h4>
                     <p className="text-sm text-muted">
@@ -244,6 +278,14 @@ export default function DivisionsPage() {
                       Active
                     </span>
                   )}
+                </div>
+                <div className="flex space-x-2 mt-3">
+                  <Button size="sm" variant="outline" onClick={() => openEditSeasonModal(season)}>
+                    Edit
+                  </Button>
+                  <Button size="sm" variant="danger" onClick={() => handleDeleteSeason(season.id)}>
+                    Delete
+                  </Button>
                 </div>
               </div>
             ))}
@@ -348,11 +390,11 @@ export default function DivisionsPage() {
         </form>
       </Modal>
 
-      {/* Create Season Modal */}
+      {/* Create/Edit Season Modal */}
       <Modal
         isOpen={seasonModalOpen}
-        onClose={() => setSeasonModalOpen(false)}
-        title="Create Season"
+        onClose={closeSeasonModal}
+        title={editingSeason ? 'Edit Season' : 'Create Season'}
       >
         <form onSubmit={handleSeasonSubmit} className="space-y-4">
           <Input
@@ -388,10 +430,10 @@ export default function DivisionsPage() {
             <span className="text-sm text-foreground">Set as active season</span>
           </label>
           <div className="flex justify-end space-x-3 pt-4">
-            <Button type="button" variant="outline" onClick={() => setSeasonModalOpen(false)}>
+            <Button type="button" variant="outline" onClick={closeSeasonModal}>
               Cancel
             </Button>
-            <Button type="submit">Create Season</Button>
+            <Button type="submit">{editingSeason ? 'Save Changes' : 'Create Season'}</Button>
           </div>
         </form>
       </Modal>
