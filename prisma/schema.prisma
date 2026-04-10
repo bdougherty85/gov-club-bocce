@@ -21,6 +21,19 @@ model Season {
 
   divisions   Division[]
   games       Game[]
+  offWeeks    SeasonOffWeek[]
+}
+
+// Off weeks when the league doesn't play (holidays, etc.)
+model SeasonOffWeek {
+  id          String   @id @default(uuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  weekStart   DateTime // Start date of the off week
+  reason      String?  // e.g., "Thanksgiving", "Christmas", "Holiday"
+  createdAt   DateTime @default(now())
+
+  @@index([seasonId])
 }
 
 // Player model for individual participants

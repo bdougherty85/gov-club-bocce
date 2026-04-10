@@ -30,6 +30,9 @@ export async function GET(
             awayTeam: true,
           },
         },
+        offWeeks: {
+          orderBy: { weekStart: 'asc' },
+        },
       },
     });
 
