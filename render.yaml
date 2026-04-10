@@ -1,0 +1,20 @@
+databases:
+  - name: gov-club-db
+    plan: free
+    databaseName: govclub
+    user: govclub
+
+services:
+  - type: web
+    name: gov-club
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gov-club-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
