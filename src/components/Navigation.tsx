@@ -16,6 +16,8 @@ const navItems = [
   { href: '/bocce/settings', label: 'Settings' },
 ];
 
+const tvDisplayItem = { href: '/bocce/display', label: 'TV Display' };
+
 export default function Navigation() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -50,6 +52,15 @@ export default function Navigation() {
                 {item.label}
               </Link>
             ))}
+            <a
+              href={tvDisplayItem.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-2 px-3 py-2 rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors flex items-center gap-1"
+            >
+              <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse"></span>
+              {tvDisplayItem.label}
+            </a>
           </div>
 
           {/* Mobile menu button */}
@@ -104,6 +115,15 @@ export default function Navigation() {
                 {item.label}
               </Link>
             ))}
+            <a
+              href={tvDisplayItem.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block px-3 py-2 rounded-md text-base font-medium bg-red-600 text-white hover:bg-red-700 mt-2"
+            >
+              <span className="inline-block w-2 h-2 bg-white rounded-full animate-pulse mr-2"></span>
+              {tvDisplayItem.label}
+            </a>
           </div>
         </div>
       )}

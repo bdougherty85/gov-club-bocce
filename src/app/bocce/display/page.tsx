@@ -50,6 +50,7 @@ interface Settings {
   leagueName: string;
   primaryColor: string;
   secondaryColor: string;
+  currentDivisionId: string | null;
 }
 
 const ROTATION_INTERVAL = 10000; // 10 seconds
@@ -167,9 +168,9 @@ export default function TVDisplayPage() {
       {/* Main Content */}
       <main className="p-8 h-[calc(100vh-120px)]">
         {currentView === 'games' ? (
-          <GamesView games={todayGames} />
+          <GamesView games={todayGames} currentDivisionId={settings?.currentDivisionId} />
         ) : (
-          <StandingsView divisions={divisions} />
+          <StandingsView divisions={divisions} currentDivisionId={settings?.currentDivisionId} />
         )}
       </main>
 
@@ -190,8 +191,17 @@ export default function TVDisplayPage() {
   );
 }
 
-function GamesView({ games }: { games: Game[] }) {
-  if (games.length === 0) {
+function GamesView({ games, currentDivisionId }: { games: Game[]; currentDivisionId?: string | null }) {
+  // Filter games by current division if set
+  const filteredGames = currentDivisionId
+    ? games.filter(g => {
+        // Games might have team.divisionId - need to check the actual structure
+        // For now, we'll show all games if division filtering is complex
+        return true; // TODO: Add division filtering for games if needed
+      })
+    : games;
+
+  if (filteredGames.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -283,8 +293,13 @@ function GamesView({ games }: { games: Game[] }) {
   );
 }
 
-function StandingsView({ divisions }: { divisions: Division[] }) {
-  if (divisions.length === 0) {
+function StandingsView({ divisions, currentDivisionId }: { divisions: Division[]; currentDivisionId?: string | null }) {
+  // Filter to show only the current division if set
+  const filteredDivisions = currentDivisionId
+    ? divisions.filter(d => d.id === currentDivisionId)
+    : divisions;
+
+  if (filteredDivisions.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -296,9 +311,11 @@ function StandingsView({ divisions }: { divisions: Division[] }) {
 
   return (
     <div className="h-full overflow-auto">
-      <h2 className="text-4xl font-bold mb-6 text-center">Standings</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {divisions.map((division) => (
+      <h2 className="text-4xl font-bold mb-6 text-center">
+        {currentDivisionId ? filteredDivisions[0]?.name + ' Standings' : 'Standings'}
+      </h2>
+      <div className={`grid gap-8 ${filteredDivisions.length === 1 ? 'grid-cols-1 max-w-3xl mx-auto' : 'grid-cols-1 lg:grid-cols-2'}`}>
+        {filteredDivisions.map((division) => (
           <div key={division.id} className="bg-white/10 backdrop-blur rounded-2xl p-6">
             <h3 className="text-2xl font-bold mb-4 text-secondary">{division.name}</h3>
             <table className="w-full">

@@ -207,4 +207,5 @@ model Settings {
   logo                   String?
   primaryColor           String  @default("#1B4D3E")
   secondaryColor         String  @default("#C5A572")
+  currentDivisionId      String? // ID of division currently playing (for TV display)
 }

@@ -39,6 +39,7 @@ export async function PUT(request: NextRequest) {
       logo,
       primaryColor,
       secondaryColor,
+      currentDivisionId,
     } = body;
 
     let settings = await prisma.settings.findFirst();
@@ -55,6 +56,7 @@ export async function PUT(request: NextRequest) {
           logo,
           primaryColor,
           secondaryColor,
+          currentDivisionId,
         },
       });
     } else {
@@ -68,6 +70,7 @@ export async function PUT(request: NextRequest) {
           logo,
           primaryColor: primaryColor || '#1B4D3E',
           secondaryColor: secondaryColor || '#C5A572',
+          currentDivisionId,
         },
       });
     }

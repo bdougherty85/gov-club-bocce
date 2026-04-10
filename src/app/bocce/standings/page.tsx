@@ -30,24 +30,32 @@ interface Standing {
   pointDifferential: number;
 }
 
+interface Settings {
+  currentDivisionId: string | null;
+}
+
 export default function StandingsPage() {
   const [standings, setStandings] = useState<Standing[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDivision, setSelectedDivision] = useState('all');
 
   const fetchData = async () => {
     try {
-      const [standingsRes, divisionsRes] = await Promise.all([
+      const [standingsRes, divisionsRes, settingsRes] = await Promise.all([
         fetch('/api/standings'),
         fetch('/api/divisions'),
+        fetch('/api/settings'),
       ]);
-      const [standingsData, divisionsData] = await Promise.all([
+      const [standingsData, divisionsData, settingsData] = await Promise.all([
         standingsRes.json(),
         divisionsRes.json(),
+        settingsRes.json(),
       ]);
       setStandings(standingsData);
       setDivisions(divisionsData);
+      setSettings(settingsData);
     } catch (error) {
       toast.error('Failed to load standings');
     } finally {
@@ -58,6 +66,39 @@ export default function StandingsPage() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const setCurrentDivision = async (divisionId: string | null) => {
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentDivisionId: divisionId }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update');
+
+      setSettings((prev) => prev ? { ...prev, currentDivisionId: divisionId } : null);
+      const divName = divisionId ? divisions.find(d => d.id === divisionId)?.name : 'None';
+      toast.success(`Now showing: ${divName || 'All Divisions'}`);
+    } catch (error) {
+      toast.error('Failed to update current division');
+    }
+  };
+
+  const advanceToNextDivision = () => {
+    if (divisions.length === 0) return;
+
+    const currentIndex = settings?.currentDivisionId
+      ? divisions.findIndex(d => d.id === settings.currentDivisionId)
+      : -1;
+
+    const nextIndex = (currentIndex + 1) % divisions.length;
+    setCurrentDivision(divisions[nextIndex].id);
+  };
+
+  const currentDivision = settings?.currentDivisionId
+    ? divisions.find(d => d.id === settings.currentDivisionId)
+    : null;
 
   const recalculateStandings = async (divisionId: string) => {
     try {
@@ -102,6 +143,41 @@ export default function StandingsPage() {
           <p className="text-muted mt-1">View league standings by division</p>
         </div>
       </div>
+
+      {/* TV Display Control */}
+      <Card className="mb-6 border-2 border-primary">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+              <span className="inline-block w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+              TV Display - Now Playing
+            </h3>
+            <p className="text-muted text-sm mt-1">
+              {currentDivision ? (
+                <>Currently showing: <strong className="text-foreground">{currentDivision.name}</strong></>
+              ) : (
+                'No division selected - TV will show all divisions'
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Select
+              value={settings?.currentDivisionId || ''}
+              onChange={(e) => setCurrentDivision(e.target.value || null)}
+              options={[
+                { value: '', label: 'Show All Divisions' },
+                ...divisions.map((d) => ({
+                  value: d.id,
+                  label: d.name,
+                })),
+              ]}
+            />
+            <Button onClick={advanceToNextDivision} disabled={divisions.length === 0}>
+              Next Division →
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       {/* Division Filter */}
       <Card className="mb-6">
