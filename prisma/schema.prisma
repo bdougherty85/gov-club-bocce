@@ -125,10 +125,10 @@ model Game {
   id            String    @id @default(uuid())
   seasonId      String
   season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  homeTeamId    String
-  homeTeam      Team      @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
-  awayTeamId    String
-  awayTeam      Team      @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  homeTeamId    String?
+  homeTeam      Team?     @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeamId    String?
+  awayTeam      Team?     @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
   timeSlotId    String?
   timeSlot      TimeSlot? @relation(fields: [timeSlotId], references: [id])
   courtId       String?
@@ -139,6 +139,9 @@ model Game {
   isPlayoff     Boolean   @default(false)
   playoffRound  Int?      // 1 = First Round, 2 = Quarterfinals, etc.
   playoffBracket String?  // "winners" or "losers" for double elimination
+  playoffPosition Int?    // Position within the round (0, 1, 2, 3, etc.)
+  nextGameId    String?   // ID of the next game winner advances to
+  nextGamePosition String? // "home" or "away" - which slot winner fills in next game
   status        String    @default("scheduled") // scheduled, in_progress, completed, cancelled
   scoreboardPhoto String? // URL/path to uploaded scoreboard photo
   notes         String?

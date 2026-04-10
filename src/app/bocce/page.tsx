@@ -132,7 +132,7 @@ export default async function BocceDashboard() {
                 <div key={game.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div>
                     <p className="font-medium text-foreground">
-                      {game.homeTeam.name} vs {game.awayTeam.name}
+                      {game.homeTeam?.name ?? 'TBD'} vs {game.awayTeam?.name ?? 'TBD'}
                     </p>
                     <p className="text-sm text-muted">
                       {new Date(game.scheduledDate).toLocaleDateString('en-US', {
@@ -161,7 +161,7 @@ export default async function BocceDashboard() {
                 <div key={game.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div>
                     <p className="font-medium text-foreground">
-                      {game.homeTeam.name} {game.homeScore} - {game.awayScore} {game.awayTeam.name}
+                      {game.homeTeam?.name ?? 'TBD'} {game.homeScore} - {game.awayScore} {game.awayTeam?.name ?? 'TBD'}
                     </p>
                     <p className="text-sm text-muted">
                       {new Date(game.scheduledDate).toLocaleDateString('en-US', {

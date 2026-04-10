@@ -85,6 +85,8 @@ export default function GamesPage() {
     }
   };
 
+  const [extracting, setExtracting] = useState(false);
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedGame) return;
@@ -113,11 +115,70 @@ export default function GamesPage() {
       if (!res.ok) throw new Error('Failed to save photo');
 
       toast.success('Photo uploaded!');
+
+      // Update the selected game with the new photo URL
+      setSelectedGame({ ...selectedGame, scoreboardPhoto: url });
       fetchGames();
+
+      // Automatically try to extract scores from the photo
+      extractScoresFromPhoto(url);
     } catch (error) {
       toast.error('Failed to upload photo');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const extractScoresFromPhoto = async (imageUrl: string) => {
+    if (!selectedGame) return;
+
+    setExtracting(true);
+    try {
+      const res = await fetch('/api/extract-score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl,
+          homeTeamName: selectedGame.homeTeam.name,
+          awayTeamName: selectedGame.awayTeam.name,
+        }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        if (error.error === 'AI service not configured') {
+          toast.error('AI score extraction not configured. Please enter scores manually.');
+          return;
+        }
+        throw new Error('Failed to extract scores');
+      }
+
+      const result = await res.json();
+
+      if (result.homeScore !== null && result.awayScore !== null) {
+        // Auto-fill the score fields
+        setFormData({
+          ...formData,
+          homeScore: result.homeScore.toString(),
+          awayScore: result.awayScore.toString(),
+          status: 'completed',
+        });
+
+        if (result.confidence === 'high') {
+          toast.success(`Scores extracted: ${result.homeScore} - ${result.awayScore}`);
+        } else {
+          toast.success(
+            `Scores extracted (${result.confidence} confidence): ${result.homeScore} - ${result.awayScore}. Please verify.`
+          );
+        }
+      } else {
+        toast.error(`Could not extract scores: ${result.rawText || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Score extraction error:', error);
+      toast.error('Failed to extract scores. Please enter manually.');
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -338,7 +399,7 @@ export default function GamesPage() {
             <label className="block text-sm font-medium text-foreground mb-1">
               Scoreboard Photo
             </label>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -350,21 +411,40 @@ export default function GamesPage() {
                 type="button"
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
+                disabled={uploading || extracting}
               >
                 {uploading ? 'Uploading...' : 'Upload Photo'}
               </Button>
               {selectedGame?.scoreboardPhoto && (
-                <a
-                  href={selectedGame.scoreboardPhoto}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline"
-                >
-                  View Current Photo
-                </a>
+                <>
+                  <a
+                    href={selectedGame.scoreboardPhoto}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline"
+                  >
+                    View Current Photo
+                  </a>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => extractScoresFromPhoto(selectedGame.scoreboardPhoto!)}
+                    disabled={extracting || uploading}
+                  >
+                    {extracting ? 'Analyzing...' : 'Extract Scores with AI'}
+                  </Button>
+                </>
               )}
             </div>
+            {extracting && (
+              <p className="text-sm text-muted mt-2 flex items-center gap-2">
+                <svg className="animate-spin h-4 w-4 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                AI is analyzing the scoreboard photo...
+              </p>
+            )}
           </div>
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-border">

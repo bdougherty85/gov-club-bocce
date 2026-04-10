@@ -70,6 +70,19 @@ export async function PUT(
       courtId,
     } = body;
 
+    // First get the current game to check if it's a playoff game
+    const currentGame = await prisma.game.findUnique({
+      where: { id },
+      include: {
+        homeTeam: true,
+        awayTeam: true,
+      },
+    });
+
+    if (!currentGame) {
+      return NextResponse.json({ error: 'Game not found' }, { status: 404 });
+    }
+
     const game = await prisma.game.update({
       where: { id },
       data: {
@@ -88,65 +101,85 @@ export async function PUT(
       },
     });
 
-    // Update standings if game is completed
+    // Handle completed games
     if (status === 'completed' && homeScore !== null && awayScore !== null) {
-      const homeTeam = await prisma.team.findUnique({
-        where: { id: game.homeTeamId },
-      });
+      // If this is a playoff game, advance the winner to the next round
+      if (game.isPlayoff && game.nextGameId && game.nextGamePosition) {
+        const winnerId = homeScore > awayScore ? game.homeTeamId : game.awayTeamId;
 
-      if (homeTeam) {
-        // Update home team standing
-        await prisma.standing.upsert({
-          where: {
-            teamId_divisionId: {
-              teamId: game.homeTeamId,
-              divisionId: homeTeam.divisionId,
-            },
-          },
-          update: {
-            wins: homeScore > awayScore ? { increment: 1 } : undefined,
-            losses: homeScore < awayScore ? { increment: 1 } : undefined,
-            pointsFor: { increment: homeScore },
-            pointsAgainst: { increment: awayScore },
-          },
-          create: {
-            teamId: game.homeTeamId,
-            divisionId: homeTeam.divisionId,
-            wins: homeScore > awayScore ? 1 : 0,
-            losses: homeScore < awayScore ? 1 : 0,
-            pointsFor: homeScore,
-            pointsAgainst: awayScore,
-          },
+        if (winnerId) {
+          // Update the next game with the winner
+          const updateData = game.nextGamePosition === 'home'
+            ? { homeTeamId: winnerId }
+            : { awayTeamId: winnerId };
+
+          await prisma.game.update({
+            where: { id: game.nextGameId },
+            data: updateData,
+          });
+        }
+      }
+
+      // Update standings for regular season games (not playoffs)
+      if (!game.isPlayoff && game.homeTeamId && game.awayTeamId) {
+        const homeTeam = await prisma.team.findUnique({
+          where: { id: game.homeTeamId },
         });
 
-        // Update away team standing
-        const awayTeam = await prisma.team.findUnique({
-          where: { id: game.awayTeamId },
-        });
-
-        if (awayTeam) {
+        if (homeTeam) {
+          // Update home team standing
           await prisma.standing.upsert({
             where: {
               teamId_divisionId: {
-                teamId: game.awayTeamId,
-                divisionId: awayTeam.divisionId,
+                teamId: game.homeTeamId,
+                divisionId: homeTeam.divisionId,
               },
             },
             update: {
-              wins: awayScore > homeScore ? { increment: 1 } : undefined,
-              losses: awayScore < homeScore ? { increment: 1 } : undefined,
-              pointsFor: { increment: awayScore },
-              pointsAgainst: { increment: homeScore },
+              wins: homeScore > awayScore ? { increment: 1 } : undefined,
+              losses: homeScore < awayScore ? { increment: 1 } : undefined,
+              pointsFor: { increment: homeScore },
+              pointsAgainst: { increment: awayScore },
             },
             create: {
-              teamId: game.awayTeamId,
-              divisionId: awayTeam.divisionId,
-              wins: awayScore > homeScore ? 1 : 0,
-              losses: awayScore < homeScore ? 1 : 0,
-              pointsFor: awayScore,
-              pointsAgainst: homeScore,
+              teamId: game.homeTeamId,
+              divisionId: homeTeam.divisionId,
+              wins: homeScore > awayScore ? 1 : 0,
+              losses: homeScore < awayScore ? 1 : 0,
+              pointsFor: homeScore,
+              pointsAgainst: awayScore,
             },
           });
+
+          // Update away team standing
+          const awayTeam = await prisma.team.findUnique({
+            where: { id: game.awayTeamId },
+          });
+
+          if (awayTeam) {
+            await prisma.standing.upsert({
+              where: {
+                teamId_divisionId: {
+                  teamId: game.awayTeamId,
+                  divisionId: awayTeam.divisionId,
+                },
+              },
+              update: {
+                wins: awayScore > homeScore ? { increment: 1 } : undefined,
+                losses: awayScore < homeScore ? { increment: 1 } : undefined,
+                pointsFor: { increment: awayScore },
+                pointsAgainst: { increment: homeScore },
+              },
+              create: {
+                teamId: game.awayTeamId,
+                divisionId: awayTeam.divisionId,
+                wins: awayScore > homeScore ? 1 : 0,
+                losses: awayScore < homeScore ? 1 : 0,
+                pointsFor: awayScore,
+                pointsAgainst: homeScore,
+              },
+            });
+          }
         }
       }
     }
