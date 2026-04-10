@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
+import bcrypt from 'bcryptjs';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -47,6 +48,29 @@ async function main() {
   await prisma.timeSlot.deleteMany();
   await prisma.court.deleteMany();
   await prisma.player.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.userAppAccess.deleteMany();
+  await prisma.user.deleteMany();
+
+  // Create Admin User
+  console.log('\nCreating admin user...');
+  const passwordHash = await bcrypt.hash('sprinklz', 12);
+  const adminUser = await prisma.user.create({
+    data: {
+      username: 'Bdougherty85',
+      email: 'bdougherty85@govclub.com',
+      passwordHash,
+      name: 'Brian Dougherty',
+      role: 'admin',
+      appAccess: {
+        create: [
+          { appName: 'bocce', role: 'admin' },
+          { appName: 'staff', role: 'admin' },
+        ],
+      },
+    },
+  });
+  console.log(`  ✓ Created admin user: ${adminUser.username}`);
 
   // Create Season
   console.log('Creating season...');
@@ -350,6 +374,7 @@ async function main() {
 
   console.log('\n✅ Seeding complete!\n');
   console.log('Summary:');
+  console.log('  - 1 Admin User (Bdougherty85 / sprinklz)');
   console.log('  - 1 Season (Spring 2026)');
   console.log('  - 2 Divisions (Gold & Silver)');
   console.log('  - 3 Courts');

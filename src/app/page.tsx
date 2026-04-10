@@ -36,6 +36,26 @@ const apps = [
     available: true,
   },
   {
+    id: 'groups',
+    name: 'Interest Groups',
+    description: 'Join social groups, schedule meetings, and connect with fellow members',
+    href: '/groups',
+    icon: (
+      <svg className="w-12 h-12" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="32" cy="20" r="8" fill="currentColor" />
+        <circle cx="16" cy="28" r="6" fill="currentColor" opacity="0.7" />
+        <circle cx="48" cy="28" r="6" fill="currentColor" opacity="0.7" />
+        <path d="M32 28C38 28 44 32 44 40H20C20 32 26 28 32 28Z" fill="currentColor" />
+        <path d="M16 34C20 34 24 36 24 42H8C8 36 12 34 16 34Z" fill="currentColor" opacity="0.7" />
+        <path d="M48 34C52 34 56 36 56 42H40C40 36 44 34 48 34Z" fill="currentColor" opacity="0.7" />
+        <circle cx="32" cy="52" r="4" fill="currentColor" />
+        <path d="M28 48H36" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    ),
+    color: 'bg-purple-600',
+    available: true,
+  },
+  {
     id: 'golf',
     name: 'Golf Events',
     description: 'Tournament registration, tee times, and handicap tracking',

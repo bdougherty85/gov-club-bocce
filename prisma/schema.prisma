@@ -243,6 +243,55 @@ model Standing {
   @@unique([teamId, divisionId])
 }
 
+// ============================================
+// Authentication Models
+// ============================================
+
+// User authentication model
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  email         String?   @unique
+  passwordHash  String
+  name          String
+  role          String    @default("user") // "admin", "manager", "user"
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  appAccess     UserAppAccess[]
+}
+
+// Session for auth
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+// User access to specific sub-apps
+model UserAppAccess {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appName   String   // "bocce", "staff", "betting"
+  role      String   @default("viewer") // "admin", "manager", "editor", "viewer"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, appName])
+  @@index([userId])
+  @@index([appName])
+}
+
 // League settings
 model Settings {
   id                     String  @id @default(uuid())
@@ -337,4 +386,152 @@ model StatusUpdate {
 
   @@index([actionItemId])
   @@index([staffId])
+}
+
+// ============================================
+// Interest Groups Models
+// ============================================
+
+// Club rooms available for booking
+model Room {
+  id          String    @id @default(uuid())
+  name        String    @unique // "Men's Grill", "Women's Locker Room", "Pub", "Dining Room", "Event Room"
+  capacity    Int       // Maximum capacity
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  meetings           Meeting[]
+  recurringSchedules RecurringSchedule[]
+}
+
+// Interest group / social group
+model InterestGroup {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  topic       String   // "Wine", "Books", "Investments", "Golf", etc.
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members            GroupMember[]
+  membershipRequests MembershipRequest[]
+  meetings           Meeting[]
+  recurringSchedules RecurringSchedule[]
+  messages           GroupMessage[]
+}
+
+// Group membership with role
+model GroupMember {
+  id        String        @id @default(uuid())
+  groupId   String
+  group     InterestGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name      String        // Member name
+  email     String?
+  role      String        @default("member") // "lead", "member"
+  joinedAt  DateTime      @default(now())
+
+  @@unique([groupId, email])
+  @@index([groupId])
+}
+
+// Membership request (pending approvals)
+model MembershipRequest {
+  id          String        @id @default(uuid())
+  groupId     String
+  group       InterestGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name        String
+  email       String
+  status      String        @default("pending") // "pending", "approved", "rejected"
+  requestedAt DateTime      @default(now())
+  respondedAt DateTime?
+
+  @@index([groupId])
+  @@index([status])
+}
+
+// Group message board posts
+model GroupMessage {
+  id        String        @id @default(uuid())
+  groupId   String
+  group     InterestGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  authorId  String        // GroupMember id
+  authorName String       // Denormalized for display
+  content   String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([groupId])
+  @@index([createdAt])
+}
+
+// Recurring schedule template for group meetings
+model RecurringSchedule {
+  id             String        @id @default(uuid())
+  groupId        String
+  group          InterestGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  roomId         String
+  room           Room          @relation(fields: [roomId], references: [id])
+  recurrenceType String        // "weekly", "biweekly", "monthly_day", "monthly_ordinal"
+  dayOfWeek      Int?          // 0-6 for weekly/biweekly (0=Sunday)
+  dayOfMonth     Int?          // 1-31 for monthly_day
+  weekOrdinal    Int?          // 1-5 for "First Monday", "Second Tuesday", etc.
+  startTime      String        // "14:00" format
+  endTime        String        // "16:00" format
+  roomCapacity   String        @default("FULL") // "QUARTER", "HALF", "THREE_QUARTER", "FULL"
+  description    String?
+  isActive       Boolean       @default(true)
+  startDate      DateTime      // When this recurring schedule begins
+  endDate        DateTime?     // Optional end date
+  createdAt      DateTime      @default(now())
+
+  meetings Meeting[]
+
+  @@index([groupId])
+  @@index([roomId])
+}
+
+// Individual meeting instance
+model Meeting {
+  id                  String             @id @default(uuid())
+  groupId             String
+  group               InterestGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  roomId              String
+  room                Room               @relation(fields: [roomId], references: [id])
+  recurringScheduleId String?            // Link to recurring schedule if generated from one
+  recurringSchedule   RecurringSchedule? @relation(fields: [recurringScheduleId], references: [id], onDelete: SetNull)
+  title               String?            // Optional override title
+  description         String?
+  date                DateTime           // Date of the meeting
+  startTime           String             // "14:00" format
+  endTime             String             // "16:00" format
+  roomCapacity        String             @default("FULL") // "QUARTER", "HALF", "THREE_QUARTER", "FULL"
+  status              String             @default("scheduled") // "scheduled", "cancelled", "completed"
+  cancellationReason  String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  staffRequests MeetingStaffRequest[]
+
+  @@index([groupId])
+  @@index([roomId])
+  @@index([date])
+  @@index([recurringScheduleId])
+}
+
+// Staff support requests from group leads
+model MeetingStaffRequest {
+  id           String   @id @default(uuid())
+  meetingId    String
+  meeting      Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  groupId      String   // Direct link to group for easier queries
+  requestType  String   // "catering", "setup", "equipment", "other"
+  description  String
+  actionItemId String?  @unique // Link to created ActionItem in Staff system
+  status       String   @default("pending") // "pending", "submitted", "completed"
+  requestedAt  DateTime @default(now())
+  requestedBy  String   // Name of person who requested
+
+  @@index([meetingId])
+  @@index([groupId])
 }
