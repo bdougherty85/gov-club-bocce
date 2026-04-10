@@ -143,7 +143,7 @@ export default function PlayoffsPage() {
   };
 
   // Group games by round
-  const gamesByRound = bracket?.games.reduce((acc, game) => {
+  const gamesByRound = bracket?.games?.reduce((acc, game) => {
     if (!acc[game.round]) acc[game.round] = [];
     acc[game.round].push(game);
     return acc;
