@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Navigation from "@/components/Navigation";
 import { Toaster } from "react-hot-toast";
 
 const geistSans = Geist({
@@ -15,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Governors Club Bocce League",
-  description: "Manage the Governors Club Bocce League - Teams, Schedules, Standings, and more",
+  title: "Governors Club",
+  description: "Governors Club Member Portal - Access club apps and services",
 };
 
 export default function RootLayout({
@@ -31,13 +30,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background">
         <Toaster position="top-right" />
-        <Navigation />
-        <main className="flex-1">
-          {children}
-        </main>
-        <footer className="bg-primary text-white py-4 text-center text-sm">
-          <p>&copy; {new Date().getFullYear()} Governors Club Bocce League. All rights reserved.</p>
-        </footer>
+        {children}
       </body>
     </html>
   );

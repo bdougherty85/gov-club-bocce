@@ -5,15 +5,15 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
 const navItems = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/players', label: 'Players' },
-  { href: '/teams', label: 'Teams' },
-  { href: '/divisions', label: 'Divisions' },
-  { href: '/schedule', label: 'Schedule' },
-  { href: '/games', label: 'Games & Scores' },
-  { href: '/standings', label: 'Standings' },
-  { href: '/playoffs', label: 'Playoffs' },
-  { href: '/settings', label: 'Settings' },
+  { href: '/bocce', label: 'Dashboard' },
+  { href: '/bocce/players', label: 'Players' },
+  { href: '/bocce/teams', label: 'Teams' },
+  { href: '/bocce/divisions', label: 'Divisions' },
+  { href: '/bocce/schedule', label: 'Schedule' },
+  { href: '/bocce/games', label: 'Games & Scores' },
+  { href: '/bocce/standings', label: 'Standings' },
+  { href: '/bocce/playoffs', label: 'Playoffs' },
+  { href: '/bocce/settings', label: 'Settings' },
 ];
 
 export default function Navigation() {
@@ -25,7 +25,7 @@ export default function Navigation() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex items-center">
-            <Link href="/" className="flex items-center space-x-3">
+            <Link href="/bocce" className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-secondary rounded-full flex items-center justify-center">
                 <span className="text-primary font-bold text-xl">GC</span>
               </div>
