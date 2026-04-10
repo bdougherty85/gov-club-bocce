@@ -33,6 +33,12 @@ export async function GET(request: NextRequest) {
         timeSlot: true,
         court: true,
         season: true,
+        lineups: {
+          include: {
+            player: true,
+            team: true,
+          },
+        },
       },
       orderBy: { scheduledDate: 'asc' },
     });
@@ -53,6 +59,7 @@ export async function POST(request: NextRequest) {
       scheduledDate,
       timeSlotId,
       courtId,
+      weekNumber,
       isPlayoff,
       playoffRound,
       playoffBracket,
@@ -73,6 +80,7 @@ export async function POST(request: NextRequest) {
         scheduledDate: new Date(scheduledDate),
         timeSlotId,
         courtId,
+        weekNumber,
         isPlayoff: isPlayoff || false,
         playoffRound,
         playoffBracket,

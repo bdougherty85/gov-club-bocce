@@ -18,6 +18,24 @@ const apps = [
     available: true,
   },
   {
+    id: 'staff',
+    name: 'Staff Tasks',
+    description: 'Manage staff action items, track progress, and surface blockers',
+    href: '/staff',
+    icon: (
+      <svg className="w-12 h-12" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="12" y="8" width="40" height="48" rx="4" stroke="currentColor" strokeWidth="3" fill="none" />
+        <path d="M20 24H44" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M20 32H44" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M20 40H36" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="44" cy="44" r="8" fill="currentColor" />
+        <path d="M41 44L43 46L47 42" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+    color: 'bg-indigo-600',
+    available: true,
+  },
+  {
     id: 'golf',
     name: 'Golf Events',
     description: 'Tournament registration, tee times, and handicap tracking',

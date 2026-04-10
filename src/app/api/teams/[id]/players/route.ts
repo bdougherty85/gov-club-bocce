@@ -8,7 +8,7 @@ export async function POST(
   try {
     const { id: teamId } = await params;
     const body = await request.json();
-    const { playerId, isCaptain = false } = body;
+    const { playerId, isCaptain = false, isCoach = false } = body;
 
     if (!playerId) {
       return NextResponse.json({ error: 'Player ID is required' }, { status: 400 });
@@ -19,6 +19,7 @@ export async function POST(
         teamId,
         playerId,
         isCaptain,
+        isCoach,
       },
       include: {
         player: true,
@@ -30,6 +31,45 @@ export async function POST(
   } catch (error) {
     console.error('Error adding player to team:', error);
     return NextResponse.json({ error: 'Failed to add player to team' }, { status: 500 });
+  }
+}
+
+// Update player roles (captain/coach)
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: teamId } = await params;
+    const body = await request.json();
+    const { playerId, isCaptain, isCoach } = body;
+
+    if (!playerId) {
+      return NextResponse.json({ error: 'Player ID is required' }, { status: 400 });
+    }
+
+    const updateData: { isCaptain?: boolean; isCoach?: boolean } = {};
+    if (isCaptain !== undefined) updateData.isCaptain = isCaptain;
+    if (isCoach !== undefined) updateData.isCoach = isCoach;
+
+    const teamPlayer = await prisma.teamPlayer.update({
+      where: {
+        teamId_playerId: {
+          teamId,
+          playerId,
+        },
+      },
+      data: updateData,
+      include: {
+        player: true,
+        team: true,
+      },
+    });
+
+    return NextResponse.json(teamPlayer);
+  } catch (error) {
+    console.error('Error updating player role:', error);
+    return NextResponse.json({ error: 'Failed to update player role' }, { status: 500 });
   }
 }
 

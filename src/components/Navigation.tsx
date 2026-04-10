@@ -11,7 +11,11 @@ const navItems = [
   { href: '/bocce/divisions', label: 'Divisions' },
   { href: '/bocce/schedule', label: 'Schedule' },
   { href: '/bocce/games', label: 'Games & Scores' },
+  { href: '/bocce/lineups', label: 'Lineups' },
+  { href: '/bocce/availability', label: 'Availability' },
   { href: '/bocce/standings', label: 'Standings' },
+  { href: '/bocce/stats', label: 'Player Stats' },
+  { href: '/bocce/review', label: 'Review' },
   { href: '/bocce/playoffs', label: 'Playoffs' },
   { href: '/bocce/settings', label: 'Settings' },
 ];

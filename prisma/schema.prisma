@@ -43,12 +43,33 @@ model Player {
   lastName    String
   email       String?
   phone       String?
+  role        String       @default("player") // "admin" or "player" - admins can manage everything
   isActive    Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  teamPlayers TeamPlayer[]
-  stats       PlayerStats[]
+  teamPlayers   TeamPlayer[]
+  stats         PlayerStats[]
+  gameLineups   GameLineup[]
+  availability  PlayerAvailability[]
+}
+
+// Track which weeks a player is available to play
+model PlayerAvailability {
+  id          String   @id @default(uuid())
+  playerId    String
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  seasonId    String
+  weekNumber  Int
+  isAvailable Boolean  @default(true)
+  notes       String?  // Optional notes like "traveling", "injury"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([playerId, seasonId, weekNumber])
+  @@index([playerId])
+  @@index([seasonId])
+  @@index([weekNumber])
 }
 
 // Team model
@@ -64,6 +85,7 @@ model Team {
   homeGames   Game[]       @relation("HomeTeam")
   awayGames   Game[]       @relation("AwayTeam")
   standings   Standing[]
+  gameLineups GameLineup[]
 }
 
 // Junction table for many-to-many relationship between Teams and Players
@@ -74,6 +96,7 @@ model TeamPlayer {
   playerId  String
   player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   isCaptain Boolean  @default(false)
+  isCoach   Boolean  @default(false) // Coaches can set lineups for their team
   joinedAt  DateTime @default(now())
 
   @@unique([teamId, playerId])
@@ -135,33 +158,57 @@ model DivisionPlayNight {
 
 // Game/Match model
 model Game {
-  id            String    @id @default(uuid())
-  seasonId      String
-  season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  homeTeamId    String?
-  homeTeam      Team?     @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
-  awayTeamId    String?
-  awayTeam      Team?     @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
-  timeSlotId    String?
-  timeSlot      TimeSlot? @relation(fields: [timeSlotId], references: [id])
-  courtId       String?
-  court         Court?    @relation(fields: [courtId], references: [id])
-  scheduledDate DateTime
-  homeScore     Int?
-  awayScore     Int?
-  isPlayoff     Boolean   @default(false)
-  playoffRound  Int?      // 1 = First Round, 2 = Quarterfinals, etc.
-  playoffBracket String?  // "winners" or "losers" for double elimination
-  playoffPosition Int?    // Position within the round (0, 1, 2, 3, etc.)
-  nextGameId    String?   // ID of the next game winner advances to
-  nextGamePosition String? // "home" or "away" - which slot winner fills in next game
-  status        String    @default("scheduled") // scheduled, in_progress, completed, cancelled
-  scoreboardPhoto String? // URL/path to uploaded scoreboard photo
-  notes         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  seasonId         String
+  season           Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  homeTeamId       String?
+  homeTeam         Team?     @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeamId       String?
+  awayTeam         Team?     @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  timeSlotId       String?
+  timeSlot         TimeSlot? @relation(fields: [timeSlotId], references: [id])
+  courtId          String?
+  court            Court?    @relation(fields: [courtId], references: [id])
+  scheduledDate    DateTime
+  weekNumber       Int?      // Week number within the season for grouping
+  homeScore        Int?
+  awayScore        Int?
+  isPlayoff        Boolean   @default(false)
+  playoffRound     Int?      // 1 = First Round, 2 = Quarterfinals, etc.
+  playoffBracket   String?   // "winners" or "losers" for double elimination
+  playoffPosition  Int?      // Position within the round (0, 1, 2, 3, etc.)
+  nextGameId       String?   // ID of the next game winner advances to
+  nextGamePosition String?   // "home" or "away" - which slot winner fills in next game
+  status           String    @default("scheduled") // scheduled, in_progress, completed, cancelled
+  isConfirmed      Boolean   @default(false) // Whether scores have been reviewed and confirmed
+  confirmedAt      DateTime? // When the scores were confirmed
+  scoreboardPhoto  String?   // URL/path to uploaded scoreboard photo
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  playerStats   PlayerStats[]
+  playerStats PlayerStats[]
+  lineups     GameLineup[]
+
+  @@index([weekNumber])
+  @@index([isConfirmed])
+}
+
+// Track which players are playing in each game (coach lineup management)
+model GameLineup {
+  id        String   @id @default(uuid())
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([gameId, teamId, playerId])
+  @@index([gameId])
+  @@index([teamId])
+  @@index([playerId])
 }
 
 // Individual player statistics per game
@@ -208,4 +255,86 @@ model Settings {
   primaryColor           String  @default("#1B4D3E")
   secondaryColor         String  @default("#C5A572")
   currentDivisionId      String? // ID of division currently playing (for TV display)
+}
+
+// ============================================
+// Staff Task Management Models
+// ============================================
+
+// Department for organizing staff
+model Department {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  staff       Staff[]
+  actionItems ActionItem[]
+}
+
+// Staff member who can be assigned tasks and add updates
+model Staff {
+  id           String         @id @default(uuid())
+  name         String
+  email        String?        @unique
+  role         String         @default("Staff") // "Manager", "Lead", "Staff"
+  title        String?        // Job title, e.g., "Bartender", "Head Chef"
+  departmentId String?
+  department   Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  createdTasks   ActionItem[]   @relation("CreatedBy")
+  assignedTasks  ActionItem[]   @relation("AssignedTo")
+  statusUpdates  StatusUpdate[]
+
+  @@index([departmentId])
+}
+
+// Action items / tasks
+model ActionItem {
+  id                 String         @id @default(uuid())
+  title              String
+  description        String?
+  priority           String         @default("Medium") // "High", "Medium", "Low"
+  status             String         @default("Open") // "Open", "In Progress", "Completed", "Cancelled"
+  trafficLight       String         @default("Green") // "Red", "Yellow", "Green"
+  estimatedDate      DateTime?
+  completedDate      DateTime?
+  isBlocked          Boolean        @default(false)
+  blockerDescription String?
+  departmentId       String?
+  department         Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdById        String
+  createdBy          Staff          @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  assignedToId       String?
+  assignedTo         Staff?         @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  statusUpdates StatusUpdate[]
+
+  @@index([departmentId])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([isBlocked])
+}
+
+// Status updates with traffic light status and notes
+model StatusUpdate {
+  id           String     @id @default(uuid())
+  actionItemId String
+  actionItem   ActionItem @relation(fields: [actionItemId], references: [id], onDelete: Cascade)
+  staffId      String
+  staff        Staff      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  trafficLight String     // "Red", "Yellow", "Green"
+  notes        String
+  createdAt    DateTime   @default(now())
+
+  @@index([actionItemId])
+  @@index([staffId])
 }
