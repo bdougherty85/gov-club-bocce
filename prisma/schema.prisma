@@ -1,0 +1,194 @@
+// Prisma schema for Bocce League Management System
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Season model to organize leagues by season/year
+model Season {
+  id          String     @id @default(uuid())
+  name        String     // e.g., "Spring 2024", "Fall 2024"
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  divisions   Division[]
+  games       Game[]
+}
+
+// Player model for individual participants
+model Player {
+  id          String       @id @default(uuid())
+  firstName   String
+  lastName    String
+  email       String?
+  phone       String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  teamPlayers TeamPlayer[]
+  stats       PlayerStats[]
+}
+
+// Team model
+model Team {
+  id          String       @id @default(uuid())
+  name        String
+  divisionId  String
+  division    Division     @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  teamPlayers TeamPlayer[]
+  homeGames   Game[]       @relation("HomeTeam")
+  awayGames   Game[]       @relation("AwayTeam")
+  standings   Standing[]
+}
+
+// Junction table for many-to-many relationship between Teams and Players
+model TeamPlayer {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  isCaptain Boolean  @default(false)
+  joinedAt  DateTime @default(now())
+
+  @@unique([teamId, playerId])
+}
+
+// Division model
+model Division {
+  id           String          @id @default(uuid())
+  name         String          // e.g., "Division A", "Gold Division"
+  seasonId     String
+  season       Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  teams        Team[]
+  playNights   DivisionPlayNight[]
+  standings    Standing[]
+}
+
+// Available time slots for games
+model TimeSlot {
+  id        String   @id @default(uuid())
+  dayOfWeek Int      // 0 = Sunday, 1 = Monday, etc.
+  startTime String   // e.g., "18:00"
+  endTime   String   // e.g., "19:30"
+  courtId   String?
+  court     Court?   @relation(fields: [courtId], references: [id])
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  games     Game[]
+  playNights DivisionPlayNight[]
+}
+
+// Court/Lane information
+model Court {
+  id        String     @id @default(uuid())
+  name      String     // e.g., "Court 1", "Lane A"
+  location  String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  timeSlots TimeSlot[]
+  games     Game[]
+}
+
+// Which divisions play on which nights
+model DivisionPlayNight {
+  id         String   @id @default(uuid())
+  divisionId String
+  division   Division @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  timeSlotId String
+  timeSlot   TimeSlot @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+
+  @@unique([divisionId, timeSlotId])
+}
+
+// Game/Match model
+model Game {
+  id            String    @id @default(uuid())
+  seasonId      String
+  season        Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  homeTeamId    String
+  homeTeam      Team      @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeamId    String
+  awayTeam      Team      @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  timeSlotId    String?
+  timeSlot      TimeSlot? @relation(fields: [timeSlotId], references: [id])
+  courtId       String?
+  court         Court?    @relation(fields: [courtId], references: [id])
+  scheduledDate DateTime
+  homeScore     Int?
+  awayScore     Int?
+  isPlayoff     Boolean   @default(false)
+  playoffRound  Int?      // 1 = First Round, 2 = Quarterfinals, etc.
+  playoffBracket String?  // "winners" or "losers" for double elimination
+  status        String    @default("scheduled") // scheduled, in_progress, completed, cancelled
+  scoreboardPhoto String? // URL/path to uploaded scoreboard photo
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  playerStats   PlayerStats[]
+}
+
+// Individual player statistics per game
+model PlayerStats {
+  id        String   @id @default(uuid())
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  points    Int      @default(0)
+  wins      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([playerId, gameId])
+}
+
+// Team standings within a division
+model Standing {
+  id            String   @id @default(uuid())
+  teamId        String
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  divisionId    String
+  division      Division @relation(fields: [divisionId], references: [id], onDelete: Cascade)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  pointsFor     Int      @default(0)
+  pointsAgainst Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([teamId, divisionId])
+}
+
+// League settings
+model Settings {
+  id                     String  @id @default(uuid())
+  leagueName             String  @default("Bocce League")
+  playoffFormat          String  @default("single") // single or double elimination
+  teamsInPlayoffs        Int     @default(8)
+  gamesPerMatch          Int     @default(3) // Best of 3, best of 5, etc.
+  pointsToWin            Int     @default(12) // Points needed to win a game
+  logo                   String?
+  primaryColor           String  @default("#1B4D3E")
+  secondaryColor         String  @default("#C5A572")
+}
