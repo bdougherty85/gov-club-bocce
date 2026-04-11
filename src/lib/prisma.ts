@@ -1,10 +1,10 @@
 import { PrismaClient } from '@/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool, PoolConfig } from 'pg';
+import pg from 'pg';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
-  pool: Pool | undefined;
+  pool: pg.Pool | undefined;
 };
 
 function createPrismaClient(): PrismaClient {
@@ -16,18 +16,15 @@ function createPrismaClient(): PrismaClient {
 
   // Create or reuse a connection pool
   if (!globalForPrisma.pool) {
-    const poolConfig: PoolConfig = {
+    // Configure SSL for production (Render requires SSL)
+    const ssl = process.env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: false }
+      : undefined;
+
+    globalForPrisma.pool = new pg.Pool({
       connectionString,
-    };
-
-    // Enable SSL for production (Render requires SSL)
-    if (process.env.NODE_ENV === 'production') {
-      poolConfig.ssl = {
-        rejectUnauthorized: false,
-      };
-    }
-
-    globalForPrisma.pool = new Pool(poolConfig);
+      ssl,
+    });
   }
 
   const adapter = new PrismaPg(globalForPrisma.pool);

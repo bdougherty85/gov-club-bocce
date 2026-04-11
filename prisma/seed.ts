@@ -1,10 +1,18 @@
 import 'dotenv/config';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import pg from 'pg';
 import bcrypt from 'bcryptjs';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Configure SSL for production
+const ssl = process.env.NODE_ENV === 'production'
+  ? { rejectUnauthorized: false }
+  : undefined;
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl,
+});
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
