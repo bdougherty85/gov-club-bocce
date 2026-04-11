@@ -1,20 +1,8 @@
 import 'dotenv/config';
-import { PrismaClient } from '../src/generated/prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import pg from 'pg';
+import { PrismaClient } from '../src/generated/prisma';
 import bcrypt from 'bcryptjs';
 
-// Configure SSL for production
-const ssl = process.env.NODE_ENV === 'production'
-  ? { rejectUnauthorized: false }
-  : undefined;
-
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl,
-});
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+const prisma = new PrismaClient();
 
 const firstNames = [
   'James', 'Robert', 'John', 'Michael', 'David', 'William', 'Richard', 'Joseph',
@@ -119,7 +107,7 @@ async function main() {
   console.log('\nCreating time slots...');
   const mondaySlot = await prisma.timeSlot.create({
     data: {
-      dayOfWeek: 1, // Monday
+      dayOfWeek: 1,
       startTime: '18:00',
       endTime: '21:00',
       courtId: courts[0].id,
@@ -127,7 +115,7 @@ async function main() {
   });
   const wednesdaySlot = await prisma.timeSlot.create({
     data: {
-      dayOfWeek: 3, // Wednesday
+      dayOfWeek: 3,
       startTime: '18:00',
       endTime: '21:00',
       courtId: courts[1].id,
@@ -175,7 +163,6 @@ async function main() {
     });
     teams.push(team);
 
-    // Create standing record
     await prisma.standing.create({
       data: {
         teamId: team.id,
@@ -218,7 +205,6 @@ async function main() {
   console.log('\nCreating sample games with scores...');
   let gamesCreated = 0;
 
-  // Gold Division games (first 4 weeks of results)
   const goldTeams = teams.slice(0, 8);
   const goldGames = [
     { home: 0, away: 1, homeScore: 12, awayScore: 8 },
@@ -227,18 +213,18 @@ async function main() {
     { home: 6, away: 7, homeScore: 12, awayScore: 6 },
     { home: 0, away: 2, homeScore: 12, awayScore: 11 },
     { home: 1, away: 3, homeScore: 7, awayScore: 12 },
-    { home: 4, away: 6, homeScore: 12, awayScore: 12 }, // tie goes to home for simplicity
+    { home: 4, away: 6, homeScore: 12, awayScore: 12 },
     { home: 5, away: 7, homeScore: 12, awayScore: 9 },
   ];
 
   for (let i = 0; i < goldGames.length; i++) {
     const g = goldGames[i];
-    const game = await prisma.game.create({
+    await prisma.game.create({
       data: {
         seasonId: season.id,
         homeTeamId: goldTeams[g.home].id,
         awayTeamId: goldTeams[g.away].id,
-        scheduledDate: new Date(2026, 3, 7 + Math.floor(i / 4) * 7), // April 7, 14, etc.
+        scheduledDate: new Date(2026, 3, 7 + Math.floor(i / 4) * 7),
         timeSlotId: mondaySlot.id,
         homeScore: g.homeScore,
         awayScore: g.awayScore,
@@ -247,7 +233,6 @@ async function main() {
     });
     gamesCreated++;
 
-    // Update standings
     const homeWon = g.homeScore > g.awayScore;
     await prisma.standing.update({
       where: { teamId_divisionId: { teamId: goldTeams[g.home].id, divisionId: divisionA.id } },
@@ -269,7 +254,6 @@ async function main() {
     });
   }
 
-  // Silver Division games
   const silverTeams = teams.slice(8, 15);
   const silverGames = [
     { home: 0, away: 1, homeScore: 12, awayScore: 7 },
@@ -287,7 +271,7 @@ async function main() {
         seasonId: season.id,
         homeTeamId: silverTeams[g.home].id,
         awayTeamId: silverTeams[g.away].id,
-        scheduledDate: new Date(2026, 3, 9 + Math.floor(i / 3) * 7), // April 9, 16, etc.
+        scheduledDate: new Date(2026, 3, 9 + Math.floor(i / 3) * 7),
         timeSlotId: wednesdaySlot.id,
         homeScore: g.homeScore,
         awayScore: g.awayScore,
@@ -296,7 +280,6 @@ async function main() {
     });
     gamesCreated++;
 
-    // Update standings
     const homeWon = g.homeScore > g.awayScore;
     await prisma.standing.update({
       where: { teamId_divisionId: { teamId: silverTeams[g.home].id, divisionId: divisionB.id } },
@@ -318,7 +301,7 @@ async function main() {
     });
   }
 
-  // Create some upcoming scheduled games
+  // Create upcoming scheduled games
   console.log('\nCreating upcoming scheduled games...');
   const upcomingGoldGames = [
     { home: 0, away: 3 },
@@ -332,7 +315,7 @@ async function main() {
         seasonId: season.id,
         homeTeamId: goldTeams[g.home].id,
         awayTeamId: goldTeams[g.away].id,
-        scheduledDate: new Date(2026, 3, 21), // April 21
+        scheduledDate: new Date(2026, 3, 21),
         timeSlotId: mondaySlot.id,
         status: 'scheduled',
       },
@@ -351,7 +334,7 @@ async function main() {
         seasonId: season.id,
         homeTeamId: silverTeams[g.home].id,
         awayTeamId: silverTeams[g.away].id,
-        scheduledDate: new Date(2026, 3, 23), // April 23
+        scheduledDate: new Date(2026, 3, 23),
         timeSlotId: wednesdaySlot.id,
         status: 'scheduled',
       },
@@ -396,5 +379,4 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
-    await pool.end();
   });

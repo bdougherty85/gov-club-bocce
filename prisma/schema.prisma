@@ -1,12 +1,13 @@
 // Prisma schema for Bocce League Management System
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // Season model to organize leagues by season/year
