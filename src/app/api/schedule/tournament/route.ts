@@ -16,12 +16,16 @@ interface CourtSlot {
 }
 
 // Group time slots by start time and create court slots
+// All courts are available at each time slot by default
 function createCourtSlots(
-  timeSlots: { id: string; startTime: string; courtId: string | null; court: { id: string; name: string } | null }[]
+  timeSlots: { id: string; startTime: string; courtId: string | null; court: { id: string; name: string } | null }[],
+  allCourts: { id: string; name: string }[]
 ): CourtSlot[] {
   const slots: CourtSlot[] = [];
 
-  // Sort by start time
+  if (allCourts.length === 0) return slots;
+
+  // Sort time slots by start time
   const sorted = [...timeSlots].sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   // Group by start time
@@ -34,19 +38,21 @@ function createCourtSlots(
     byTime.get(time)!.push(slot);
   }
 
-  // Create court slots with global index
+  // Create court slots - all courts are available at each time slot
   let slotIndex = 0;
   for (const [startTime, timeSlotGroup] of Array.from(byTime.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-    for (const ts of timeSlotGroup) {
-      if (ts.courtId && ts.court) {
-        slots.push({
-          timeSlotId: ts.id,
-          courtId: ts.courtId,
-          courtName: ts.court.name,
-          startTime,
-          slotIndex,
-        });
-      }
+    // Use the first time slot ID for this time block
+    const timeSlotId = timeSlotGroup[0].id;
+
+    // All courts are available at this time
+    for (const court of allCourts) {
+      slots.push({
+        timeSlotId,
+        courtId: court.id,
+        courtName: court.name,
+        startTime,
+        slotIndex,
+      });
     }
     // All courts at same time share the same slot index (they run concurrently)
     slotIndex++;
@@ -340,29 +346,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No divisions found' }, { status: 404 });
     }
 
-    // Get the time slots with courts
+    // Get the time slots
     const timeSlots = await prisma.timeSlot.findMany({
       where: { id: { in: timeSlotIds } },
       include: { court: true },
       orderBy: { startTime: 'asc' },
     });
 
-    // Filter to only time slots that have courts assigned
-    const timeSlotsWithCourts = timeSlots.filter(ts => ts.courtId && ts.court);
-
-    if (timeSlotsWithCourts.length === 0) {
+    if (timeSlots.length === 0) {
       return NextResponse.json(
-        { error: 'No time slots with courts assigned. Each time slot must have a court.' },
+        { error: 'No valid time slots found.' },
         { status: 400 }
       );
     }
 
-    // Create court slots structure
-    const courtSlots = createCourtSlots(timeSlotsWithCourts);
+    // Get all courts - all courts are available at each time slot by default
+    const allCourts = await prisma.court.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    if (allCourts.length === 0) {
+      return NextResponse.json(
+        { error: 'No courts configured. Please add courts first.' },
+        { status: 400 }
+      );
+    }
+
+    // Create court slots structure - all courts available at each time slot
+    const courtSlots = createCourtSlots(timeSlots, allCourts);
 
     if (courtSlots.length === 0) {
       return NextResponse.json(
-        { error: 'No courts available. Please assign courts to time slots.' },
+        { error: 'No court slots available.' },
         { status: 400 }
       );
     }
