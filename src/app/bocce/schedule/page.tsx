@@ -59,12 +59,11 @@ export default function SchedulePage() {
   });
   const [tournamentModalOpen, setTournamentModalOpen] = useState(false);
   const [tournamentData, setTournamentData] = useState({
-    divisionId: '',
+    divisionIds: [] as string[],
     tournamentDate: '',
     timeSlotIds: [] as string[],
     includePlayoffs: true,
     teamsInPlayoffs: 4,
-    minutesBetweenRounds: 60,
   });
 
   const fetchData = async () => {
@@ -207,6 +206,11 @@ export default function SchedulePage() {
   const handleTournamentSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (tournamentData.divisionIds.length === 0) {
+      toast.error('Please select at least one division');
+      return;
+    }
+
     if (tournamentData.timeSlotIds.length === 0) {
       toast.error('Please select at least one time slot');
       return;
@@ -228,16 +232,33 @@ export default function SchedulePage() {
       toast.success(result.message);
       setTournamentModalOpen(false);
       setTournamentData({
-        divisionId: '',
+        divisionIds: [],
         tournamentDate: '',
         timeSlotIds: [],
         includePlayoffs: true,
         teamsInPlayoffs: 4,
-        minutesBetweenRounds: 60,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create tournament');
     }
+  };
+
+  const toggleTournamentDivision = (divisionId: string) => {
+    setTournamentData((prev) => ({
+      ...prev,
+      divisionIds: prev.divisionIds.includes(divisionId)
+        ? prev.divisionIds.filter((id) => id !== divisionId)
+        : [...prev.divisionIds, divisionId],
+    }));
+  };
+
+  const toggleAllDivisions = () => {
+    setTournamentData((prev) => ({
+      ...prev,
+      divisionIds: prev.divisionIds.length === divisions.length
+        ? []
+        : divisions.map((d) => d.id),
+    }));
   };
 
   const toggleTournamentTimeSlot = (slotId: string) => {
@@ -246,6 +267,15 @@ export default function SchedulePage() {
       timeSlotIds: prev.timeSlotIds.includes(slotId)
         ? prev.timeSlotIds.filter((id) => id !== slotId)
         : [...prev.timeSlotIds, slotId],
+    }));
+  };
+
+  const toggleAllTimeSlots = () => {
+    setTournamentData((prev) => ({
+      ...prev,
+      timeSlotIds: prev.timeSlotIds.length === timeSlots.length
+        ? []
+        : timeSlots.map((ts) => ts.id),
     }));
   };
 
@@ -531,23 +561,8 @@ export default function SchedulePage() {
       >
         <form onSubmit={handleTournamentSchedule} className="space-y-4">
           <p className="text-sm text-muted">
-            Create a complete tournament for a single day with pool play games and optional
-            playoff bracket. All games will be scheduled on the same date.
+            Create a tournament for a single day. Games will be assigned to time slots in order.
           </p>
-
-          <Select
-            label="Division"
-            value={tournamentData.divisionId}
-            onChange={(e) => setTournamentData({ ...tournamentData, divisionId: e.target.value })}
-            options={[
-              { value: '', label: 'Select a division...' },
-              ...divisions.map((d) => ({
-                value: d.id,
-                label: `${d.name} (${d.teams.length} teams)`,
-              })),
-            ]}
-            required
-          />
 
           <Input
             label="Tournament Date"
@@ -558,10 +573,57 @@ export default function SchedulePage() {
           />
 
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">
-              Select Time Slots (for pool play games)
-            </label>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-foreground">
+                Divisions
+              </label>
+              <button
+                type="button"
+                onClick={toggleAllDivisions}
+                className="text-sm text-primary hover:underline"
+              >
+                {tournamentData.divisionIds.length === divisions.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            <div className="space-y-2 max-h-36 overflow-y-auto">
+              {divisions.length === 0 ? (
+                <p className="text-sm text-muted">No divisions configured.</p>
+              ) : (
+                divisions.map((division) => (
+                  <label
+                    key={division.id}
+                    className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tournamentData.divisionIds.includes(division.id)}
+                      onChange={() => toggleTournamentDivision(division.id)}
+                      className="rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span className="text-foreground">
+                      {division.name}
+                      <span className="text-muted ml-2">({division.teams.length} teams)</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-foreground">
+                Time Slots
+              </label>
+              <button
+                type="button"
+                onClick={toggleAllTimeSlots}
+                className="text-sm text-primary hover:underline"
+              >
+                {tournamentData.timeSlotIds.length === timeSlots.length ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+            <div className="space-y-2 max-h-36 overflow-y-auto">
               {timeSlots.length === 0 ? (
                 <p className="text-sm text-muted">
                   No time slots configured. Add time slots first.
@@ -579,7 +641,7 @@ export default function SchedulePage() {
                       className="rounded border-border text-primary focus:ring-primary"
                     />
                     <span className="text-foreground">
-                      {dayNames[slot.dayOfWeek]} {slot.startTime} - {slot.endTime}
+                      {slot.startTime} - {slot.endTime}
                       {slot.court && <span className="text-muted ml-2">({slot.court.name})</span>}
                     </span>
                   </label>
@@ -599,12 +661,12 @@ export default function SchedulePage() {
                 className="rounded border-border text-primary focus:ring-primary"
               />
               <span className="text-sm font-medium text-foreground">
-                Include playoff bracket on same day
+                Include playoff bracket
               </span>
             </label>
 
             {tournamentData.includePlayoffs && (
-              <div className="space-y-4 pl-6">
+              <div className="pl-6">
                 <Select
                   label="Teams in Playoffs"
                   value={tournamentData.teamsInPlayoffs.toString()}
@@ -620,20 +682,6 @@ export default function SchedulePage() {
                     { value: '8', label: '8 teams (Quarter-finals through Finals)' },
                   ]}
                 />
-
-                <Input
-                  label="Minutes Between Rounds"
-                  type="number"
-                  min="15"
-                  max="180"
-                  value={tournamentData.minutesBetweenRounds.toString()}
-                  onChange={(e) =>
-                    setTournamentData({
-                      ...tournamentData,
-                      minutesBetweenRounds: parseInt(e.target.value) || 60,
-                    })
-                  }
-                />
               </div>
             )}
           </div>
@@ -642,7 +690,7 @@ export default function SchedulePage() {
             <Button type="button" variant="outline" onClick={() => setTournamentModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={timeSlots.length === 0}>
+            <Button type="submit" disabled={timeSlots.length === 0 || divisions.length === 0}>
               Create Tournament
             </Button>
           </div>
