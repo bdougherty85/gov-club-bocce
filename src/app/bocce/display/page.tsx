@@ -62,7 +62,7 @@ interface Settings {
 const ROTATION_INTERVAL = 10000; // 10 seconds
 
 export default function TVDisplayPage() {
-  const [currentView, setCurrentView] = useState<'games' | 'standings' | 'bracket'>('games');
+  const [currentView, setCurrentView] = useState<'schedule' | 'bracket' | 'standings'>('schedule');
   const [todayGames, setTodayGames] = useState<Game[]>([]);
   const [playoffGames, setPlayoffGames] = useState<Game[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -70,6 +70,7 @@ export default function TVDisplayPage() {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [hasPlayoffs, setHasPlayoffs] = useState(false);
+  const [isTournamentDay, setIsTournamentDay] = useState(false);
 
   // Fetch data
   const fetchData = async () => {
@@ -97,10 +98,22 @@ export default function TVDisplayPage() {
         return gameDate >= today && gameDate < tomorrow && game.status !== 'cancelled';
       });
 
-      // Get playoff games
-      const playoffs = gamesData.filter((g: Game) => g.isPlayoff);
+      // Get playoff games (filter to today's playoffs if any)
+      const todayPlayoffs = gamesData.filter((g: Game) => {
+        if (!g.isPlayoff) return false;
+        const gameDate = new Date(g.scheduledDate);
+        return gameDate >= today && gameDate < tomorrow;
+      });
+      const allPlayoffs = gamesData.filter((g: Game) => g.isPlayoff);
+
+      // Use today's playoffs if available, otherwise all playoffs
+      const playoffs = todayPlayoffs.length > 0 ? todayPlayoffs : allPlayoffs;
       setPlayoffGames(playoffs);
       setHasPlayoffs(playoffs.length > 0);
+
+      // Detect tournament day: multiple games today with playoffs
+      const isTournament = filtered.length >= 3 && todayPlayoffs.length > 0;
+      setIsTournamentDay(isTournament);
 
       setTodayGames(filtered.length > 0 ? filtered : gamesData.filter((g: Game) => g.status === 'scheduled').slice(0, 6));
       setDivisions(divisionsData);
@@ -127,18 +140,18 @@ export default function TVDisplayPage() {
     return () => clearInterval(clockInterval);
   }, []);
 
-  // Auto-rotate views (include bracket if playoffs exist)
+  // Auto-rotate views
   useEffect(() => {
     const rotationInterval = setInterval(() => {
       setCurrentView((prev) => {
         if (hasPlayoffs) {
-          // Rotate through games -> bracket -> standings -> games
-          if (prev === 'games') return 'bracket';
+          // Tournament mode: rotate schedule -> bracket -> standings
+          if (prev === 'schedule') return 'bracket';
           if (prev === 'bracket') return 'standings';
-          return 'games';
+          return 'schedule';
         } else {
-          // No playoffs, just games and standings
-          return prev === 'games' ? 'standings' : 'games';
+          // Regular mode: just schedule and standings
+          return prev === 'schedule' ? 'standings' : 'schedule';
         }
       });
     }, ROTATION_INTERVAL);
@@ -182,7 +195,7 @@ export default function TVDisplayPage() {
               })}
             </div>
             <div className="text-white/70">
-              {currentView === 'games' ? 'Current Games' : 'Standings'}
+              {currentView === 'schedule' ? 'Schedule' : currentView === 'bracket' ? 'Bracket' : 'Standings'}
             </div>
           </div>
         </div>
@@ -190,8 +203,8 @@ export default function TVDisplayPage() {
 
       {/* Main Content */}
       <main className="p-8 h-[calc(100vh-120px)]">
-        {currentView === 'games' ? (
-          <GamesView games={todayGames} currentDivisionId={settings?.currentDivisionId} />
+        {currentView === 'schedule' ? (
+          <ScheduleView games={todayGames} />
         ) : currentView === 'bracket' ? (
           <BracketView games={playoffGames} />
         ) : (
@@ -203,7 +216,7 @@ export default function TVDisplayPage() {
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
         <div
           className={`w-3 h-3 rounded-full transition-all ${
-            currentView === 'games' ? 'bg-secondary scale-125' : 'bg-white/30'
+            currentView === 'schedule' ? 'bg-secondary scale-125' : 'bg-white/30'
           }`}
         />
         {hasPlayoffs && (
@@ -223,17 +236,8 @@ export default function TVDisplayPage() {
   );
 }
 
-function GamesView({ games, currentDivisionId }: { games: Game[]; currentDivisionId?: string | null }) {
-  // Filter games by current division if set
-  const filteredGames = currentDivisionId
-    ? games.filter(g => {
-        // Games might have team.divisionId - need to check the actual structure
-        // For now, we'll show all games if division filtering is complex
-        return true; // TODO: Add division filtering for games if needed
-      })
-    : games;
-
-  if (filteredGames.length === 0) {
+function ScheduleView({ games }: { games: Game[] }) {
+  if (games.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -257,66 +261,80 @@ function GamesView({ games, currentDivisionId }: { games: Game[]; currentDivisio
     );
   }
 
+  // Group games by time slot
+  const gamesByTime = games.reduce((acc, game) => {
+    const time = game.timeSlot?.startTime || 'TBD';
+    if (!acc[time]) acc[time] = [];
+    acc[time].push(game);
+    return acc;
+  }, {} as Record<string, Game[]>);
+
+  const timeSlots = Object.keys(gamesByTime).sort();
+
   return (
-    <div className="h-full">
+    <div className="h-full overflow-auto">
       <h2 className="text-4xl font-bold mb-6 text-center">
-        Today&apos;s Games
+        Today&apos;s Schedule
       </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 h-[calc(100%-80px)] overflow-auto">
-        {games.map((game) => (
-          <div
-            key={game.id}
-            className="bg-white/10 backdrop-blur rounded-2xl p-6 flex flex-col justify-between"
-          >
-            {/* Court & Time */}
-            <div className="flex justify-between items-center mb-4">
-              <span className="px-3 py-1 bg-secondary text-primary rounded-full font-bold">
-                {game.court?.name || 'TBD'}
-              </span>
-              {game.timeSlot && (
-                <span className="text-white/70">
-                  {game.timeSlot.startTime}
-                </span>
-              )}
-            </div>
+      <div className="space-y-6">
+        {timeSlots.map((time) => (
+          <div key={time} className="bg-white/10 backdrop-blur rounded-2xl p-6">
+            <h3 className="text-2xl font-bold text-secondary mb-4">{time}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {gamesByTime[time].map((game) => (
+                <div
+                  key={game.id}
+                  className={`p-4 rounded-xl ${
+                    game.isPlayoff ? 'bg-yellow-500/20 border border-yellow-500/50' : 'bg-white/5'
+                  }`}
+                >
+                  {/* Court */}
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="px-2 py-0.5 bg-secondary text-primary text-sm rounded font-bold">
+                      {game.court?.name || 'TBD'}
+                    </span>
+                    {game.isPlayoff && (
+                      <span className="text-yellow-400 text-xs font-bold">PLAYOFF</span>
+                    )}
+                  </div>
 
-            {/* Teams */}
-            <div className="flex-1">
-              <div className="flex justify-between items-center py-3 border-b border-white/20">
-                <span className="text-2xl font-semibold">
-                  {game.homeTeam?.name || 'TBD'}
-                </span>
-                {game.status === 'completed' && (
-                  <span className="text-3xl font-bold">{game.homeScore}</span>
-                )}
-              </div>
-              <div className="flex justify-between items-center py-3">
-                <span className="text-2xl font-semibold">
-                  {game.awayTeam?.name || 'TBD'}
-                </span>
-                {game.status === 'completed' && (
-                  <span className="text-3xl font-bold">{game.awayScore}</span>
-                )}
-              </div>
-            </div>
+                  {/* Matchup */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className={`font-semibold ${game.status === 'completed' && game.homeScore! > game.awayScore! ? 'text-green-400' : ''}`}>
+                        {game.homeTeam?.name || 'TBD'}
+                      </span>
+                      {game.status === 'completed' && (
+                        <span className="font-bold text-xl">{game.homeScore}</span>
+                      )}
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className={`font-semibold ${game.status === 'completed' && game.awayScore! > game.homeScore! ? 'text-green-400' : ''}`}>
+                        {game.awayTeam?.name || 'TBD'}
+                      </span>
+                      {game.status === 'completed' && (
+                        <span className="font-bold text-xl">{game.awayScore}</span>
+                      )}
+                    </div>
+                  </div>
 
-            {/* Status */}
-            <div className="mt-4 text-center">
-              <span
-                className={`px-4 py-2 rounded-full text-sm font-bold ${
-                  game.status === 'in_progress'
-                    ? 'bg-yellow-500 text-black animate-pulse'
-                    : game.status === 'completed'
-                    ? 'bg-green-500 text-white'
-                    : 'bg-white/20'
-                }`}
-              >
-                {game.status === 'in_progress'
-                  ? 'IN PROGRESS'
-                  : game.status === 'completed'
-                  ? 'FINAL'
-                  : 'UPCOMING'}
-              </span>
+                  {/* Status badge */}
+                  {game.status === 'in_progress' && (
+                    <div className="mt-2 text-center">
+                      <span className="px-2 py-0.5 bg-yellow-500 text-black text-xs font-bold rounded animate-pulse">
+                        LIVE
+                      </span>
+                    </div>
+                  )}
+                  {game.status === 'completed' && (
+                    <div className="mt-2 text-center">
+                      <span className="px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded">
+                        FINAL
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         ))}

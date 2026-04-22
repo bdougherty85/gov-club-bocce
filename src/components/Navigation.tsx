@@ -18,6 +18,7 @@ const navItems = [
   { href: '/bocce/review', label: 'Review' },
   { href: '/bocce/playoffs', label: 'Playoffs' },
   { href: '/bocce/settings', label: 'Settings' },
+  { href: '/bocce/admin', label: 'Admin' },
 ];
 
 const tvDisplayItem = { href: '/bocce/display', label: 'TV Display' };

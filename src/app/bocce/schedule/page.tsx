@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Modal from '@/components/ui/Modal';
+import Bracket from '@/components/Bracket';
 import toast from 'react-hot-toast';
 
 interface Court {
@@ -28,6 +29,28 @@ interface Division {
   name: string;
   season: { id: string; name: string };
   teams: { id: string; name: string }[];
+}
+
+interface Team {
+  id: string;
+  name: string;
+}
+
+interface Game {
+  id: string;
+  scheduledDate: string;
+  homeTeam: Team | null;
+  awayTeam: Team | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  status: string;
+  court: Court | null;
+  timeSlot: TimeSlot | null;
+  isPlayoff?: boolean;
+  playoffRound?: number | null;
+  playoffPosition?: number | null;
+  nextGameId?: string | null;
+  nextGamePosition?: string | null;
 }
 
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -65,22 +88,28 @@ export default function SchedulePage() {
     format: 'pool_and_playoffs' as 'pool_and_playoffs' | 'single_elimination',
     teamsInPlayoffs: 4,
   });
+  const [games, setGames] = useState<Game[]>([]);
+  const [scheduleViewMode, setScheduleViewMode] = useState<'schedule' | 'bracket'>('schedule');
+  const [selectedDate, setSelectedDate] = useState<string>('');
 
   const fetchData = async () => {
     try {
-      const [timeSlotsRes, courtsRes, divisionsRes] = await Promise.all([
+      const [timeSlotsRes, courtsRes, divisionsRes, gamesRes] = await Promise.all([
         fetch('/api/timeslots'),
         fetch('/api/courts'),
         fetch('/api/divisions'),
+        fetch('/api/games'),
       ]);
-      const [timeSlotsData, courtsData, divisionsData] = await Promise.all([
+      const [timeSlotsData, courtsData, divisionsData, gamesData] = await Promise.all([
         timeSlotsRes.json(),
         courtsRes.json(),
         divisionsRes.json(),
+        gamesRes.json(),
       ]);
       setTimeSlots(timeSlotsData);
       setCourts(courtsData);
       setDivisions(divisionsData);
+      setGames(gamesData);
     } catch (error) {
       toast.error('Failed to load data');
     } finally {
@@ -422,6 +451,73 @@ export default function SchedulePage() {
         </div>
       )}
 
+      {/* Generated Schedule & Bracket View */}
+      {games.length > 0 && (
+        <div className="mt-8">
+          <Card>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <h2 className="text-xl font-bold text-foreground">Generated Games</h2>
+              <div className="flex items-center gap-4">
+                {/* Date Filter */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-muted">Filter by date:</label>
+                  <select
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="px-3 py-1.5 text-sm border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="">All Dates</option>
+                    {[...new Set(games.map(g => g.scheduledDate.split('T')[0]))].sort().map(date => (
+                      <option key={date} value={date}>
+                        {new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
+                          weekday: 'short',
+                          month: 'short',
+                          day: 'numeric'
+                        })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* View Toggle */}
+                <div className="flex border border-border rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setScheduleViewMode('schedule')}
+                    className={`px-4 py-2 text-sm font-medium ${
+                      scheduleViewMode === 'schedule'
+                        ? 'bg-primary text-white'
+                        : 'bg-white text-foreground hover:bg-gray-50'
+                    }`}
+                  >
+                    Schedule
+                  </button>
+                  <button
+                    onClick={() => setScheduleViewMode('bracket')}
+                    className={`px-4 py-2 text-sm font-medium ${
+                      scheduleViewMode === 'bracket'
+                        ? 'bg-primary text-white'
+                        : 'bg-white text-foreground hover:bg-gray-50'
+                    }`}
+                  >
+                    Bracket
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {scheduleViewMode === 'schedule' ? (
+              <ScheduleListView
+                games={games.filter(g => !selectedDate || g.scheduledDate.startsWith(selectedDate))}
+              />
+            ) : (
+              <BracketView
+                games={games.filter(g => g.isPlayoff && (!selectedDate || g.scheduledDate.startsWith(selectedDate)))}
+              />
+            )}
+          </Card>
+        </div>
+      )}
+
       {/* Time Slot Modal */}
       <Modal
         isOpen={timeSlotModalOpen}
@@ -714,6 +810,148 @@ export default function SchedulePage() {
           </div>
         </form>
       </Modal>
+    </div>
+  );
+}
+
+// Schedule List View Component
+function ScheduleListView({ games }: { games: Game[] }) {
+  if (games.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted">
+        No games found for the selected date.
+      </div>
+    );
+  }
+
+  // Group games by date and time
+  const gamesByDateAndTime = games.reduce((acc, game) => {
+    const date = game.scheduledDate.split('T')[0];
+    const time = game.timeSlot?.startTime || 'TBD';
+    const key = `${date}-${time}`;
+    if (!acc[key]) {
+      acc[key] = { date, time, games: [] };
+    }
+    acc[key].games.push(game);
+    return acc;
+  }, {} as Record<string, { date: string; time: string; games: Game[] }>);
+
+  const sortedGroups = Object.values(gamesByDateAndTime).sort((a, b) => {
+    const dateCompare = a.date.localeCompare(b.date);
+    if (dateCompare !== 0) return dateCompare;
+    return a.time.localeCompare(b.time);
+  });
+
+  return (
+    <div className="space-y-6">
+      {sortedGroups.map((group) => (
+        <div key={`${group.date}-${group.time}`}>
+          <div className="flex items-center gap-4 mb-3">
+            <h3 className="font-semibold text-foreground">
+              {new Date(group.date + 'T12:00:00').toLocaleDateString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </h3>
+            <span className="px-2 py-1 bg-primary text-white text-sm rounded">
+              {group.time}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {group.games.map((game) => (
+              <div
+                key={game.id}
+                className={`p-4 rounded-lg border ${
+                  game.isPlayoff
+                    ? 'border-yellow-400 bg-yellow-50'
+                    : 'border-border bg-gray-50'
+                }`}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-medium px-2 py-0.5 bg-secondary text-primary rounded">
+                    {game.court?.name || 'No Court'}
+                  </span>
+                  {game.isPlayoff && (
+                    <span className="text-xs font-bold text-yellow-600">
+                      {game.playoffRound === 1 ? 'Round 1' :
+                       game.playoffRound === 2 ? 'Semi-Final' :
+                       game.playoffRound === 3 ? 'Final' :
+                       `Round ${game.playoffRound}`}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className={`font-medium ${
+                      game.status === 'completed' && game.homeScore !== null && game.awayScore !== null &&
+                      game.homeScore > game.awayScore ? 'text-green-600' : 'text-foreground'
+                    }`}>
+                      {game.homeTeam?.name || 'TBD'}
+                    </span>
+                    {game.status === 'completed' && game.homeScore !== null && (
+                      <span className="font-bold">{game.homeScore}</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`font-medium ${
+                      game.status === 'completed' && game.homeScore !== null && game.awayScore !== null &&
+                      game.awayScore > game.homeScore ? 'text-green-600' : 'text-foreground'
+                    }`}>
+                      {game.awayTeam?.name || 'TBD'}
+                    </span>
+                    {game.status === 'completed' && game.awayScore !== null && (
+                      <span className="font-bold">{game.awayScore}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-muted">
+                  {game.status === 'scheduled' && 'Scheduled'}
+                  {game.status === 'in_progress' && (
+                    <span className="text-yellow-600 font-semibold">In Progress</span>
+                  )}
+                  {game.status === 'completed' && (
+                    <span className="text-green-600">Completed</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Bracket View Component (wrapper)
+function BracketView({ games }: { games: Game[] }) {
+  if (games.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted">
+        No playoff bracket available. Generate a tournament with playoffs first.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <Bracket
+        games={games.map(g => ({
+          id: g.id,
+          playoffRound: g.playoffRound || 1,
+          playoffPosition: g.playoffPosition || 0,
+          homeTeam: g.homeTeam,
+          awayTeam: g.awayTeam,
+          homeScore: g.homeScore,
+          awayScore: g.awayScore,
+          status: g.status,
+          nextGameId: g.nextGameId || null,
+          nextGamePosition: g.nextGamePosition || null,
+          court: g.court ? { name: g.court.name } : null,
+          timeSlot: g.timeSlot ? { startTime: g.timeSlot.startTime } : null,
+        }))}
+        showControls={false}
+      />
     </div>
   );
 }
