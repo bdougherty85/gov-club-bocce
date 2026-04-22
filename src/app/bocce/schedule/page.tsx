@@ -227,6 +227,8 @@ export default function SchedulePage() {
       toast.success(result.message);
       setAutoScheduleModalOpen(false);
       setAutoScheduleData({ divisionId: '', startDate: '', doubleRoundRobin: false });
+      // Refresh games to show newly created schedule
+      fetchData();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to auto-schedule');
     }
@@ -267,6 +269,8 @@ export default function SchedulePage() {
         format: 'pool_and_playoffs',
         teamsInPlayoffs: 4,
       });
+      // Refresh games to show newly created tournament
+      fetchData();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create tournament');
     }
