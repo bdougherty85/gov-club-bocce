@@ -150,6 +150,46 @@ export default function TeamsPage() {
     }
   };
 
+  const handleGenerateFunNames = async () => {
+    if (!confirm('Generate fun team names based on player last names? This will rename all teams.')) return;
+
+    try {
+      const res = await fetch('/api/teams/generate-names', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) throw new Error('Failed to generate names');
+
+      const result = await res.json();
+      toast.success(result.message);
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to generate team names');
+    }
+  };
+
+  const handleResetNames = async () => {
+    if (!confirm('Reset all team names to "Team 1, Team 2, etc."?')) return;
+
+    try {
+      const res = await fetch('/api/teams/generate-names', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) throw new Error('Failed to reset names');
+
+      const result = await res.json();
+      toast.success(result.message);
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to reset team names');
+    }
+  };
+
   const openEditModal = (team: Team) => {
     setSelectedTeam(team);
     setFormData({ name: team.name, divisionId: team.division.id });
@@ -178,9 +218,21 @@ export default function TeamsPage() {
           <h1 className="text-3xl font-bold text-foreground">Teams</h1>
           <p className="text-muted mt-1">Manage league teams and rosters</p>
         </div>
-        <Button onClick={openAddModal} disabled={divisions.length === 0}>
-          Create Team
-        </Button>
+        <div className="flex space-x-3">
+          {teams.length > 0 && (
+            <>
+              <Button variant="outline" onClick={handleGenerateFunNames}>
+                Generate Fun Names
+              </Button>
+              <Button variant="outline" onClick={handleResetNames}>
+                Reset Names
+              </Button>
+            </>
+          )}
+          <Button onClick={openAddModal} disabled={divisions.length === 0}>
+            Create Team
+          </Button>
+        </div>
       </div>
 
       {divisions.length === 0 && (
