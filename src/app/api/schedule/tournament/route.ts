@@ -84,18 +84,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // DELETE existing playoff games for this date and season BEFORE creating new ones
+    // DELETE ALL existing games for this date and season BEFORE creating new ones
+    // This includes both pool play (isPlayoff: false) and bracket games (isPlayoff: true)
     const deletedGames = await prisma.game.deleteMany({
       where: {
         seasonId,
-        isPlayoff: true,
         scheduledDate: {
           gte: startOfDay,
           lte: endOfDay,
         },
       },
     });
-    console.log(`Deleted ${deletedGames.count} existing playoff games for ${tournamentDate}`);
+    console.log(`Deleted ${deletedGames.count} existing games for ${tournamentDate}`);
 
     // Build court assignments: cycle through time slots, and for each time slot all courts are available
     const courtAssignments: { timeSlotId: string; courtId: string }[] = [];
