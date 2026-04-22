@@ -230,33 +230,35 @@ function calculateBracketStructure(numTeams: number): {
   };
 }
 
-// Generate seeding for first round
-// Simple approach: pair teams 1v2, 3v4, 5v6, etc. (or 1vN, 2v(N-1) for seeded)
+// Generate all first-round matchups
+// Every team plays in round 1. If odd number, last team gets a bye.
+// Seeding: 1vN, 2v(N-1), 3v(N-2), etc.
 function generateFirstRoundMatchups(
-  teams: { id: string; seed: number }[],
-  structure: ReturnType<typeof calculateBracketStructure>
-): { homeTeamId: string | null; awayTeamId: string | null; position: number }[] {
-  const { firstRoundGames, hasBye } = structure;
-
+  teams: { id: string; seed: number }[]
+): { homeTeamId: string; awayTeamId: string | null; position: number }[] {
   if (teams.length < 2) return [];
 
-  const matchups: { homeTeamId: string | null; awayTeamId: string | null; position: number }[] = [];
+  const matchups: { homeTeamId: string; awayTeamId: string | null; position: number }[] = [];
   const numTeams = teams.length;
 
-  // Sort teams by seed
+  // Sort teams by seed (0 = best, N-1 = worst)
   const sortedTeams = [...teams].sort((a, b) => a.seed - b.seed);
 
-  // Pair teams: best vs worst for competitive balance
-  // 1 vs N, 2 vs N-1, 3 vs N-2, etc.
-  for (let position = 0; position < firstRoundGames; position++) {
-    const homeTeam = sortedTeams[position];
-    const awayIndex = numTeams - 1 - position;
-    const awayTeam = awayIndex > position ? sortedTeams[awayIndex] : null;
+  // Number of first-round games = ceil(numTeams / 2)
+  const numGames = Math.ceil(numTeams / 2);
+
+  // Create matchups: best vs worst
+  for (let i = 0; i < numGames; i++) {
+    const homeTeam = sortedTeams[i];
+    const awayIdx = numTeams - 1 - i;
+
+    // If awayIdx <= i, we've run out of opponents (bye)
+    const awayTeam = awayIdx > i ? sortedTeams[awayIdx] : null;
 
     matchups.push({
-      homeTeamId: homeTeam?.id || null,
+      homeTeamId: homeTeam.id,
       awayTeamId: awayTeam?.id || null,
-      position,
+      position: i,
     });
   }
 
@@ -333,6 +335,13 @@ export async function POST(request: NextRequest) {
     // Create court slots structure - all courts available at each time slot
     const courtSlots = createCourtSlots(timeSlots, allCourts);
 
+    console.log('Tournament scheduling:', {
+      timeSlots: timeSlots.length,
+      courts: allCourts.length,
+      courtSlots: courtSlots.length,
+      sampleCourtSlot: courtSlots[0],
+    });
+
     if (courtSlots.length === 0) {
       return NextResponse.json(
         { error: 'No court slots available.' },
@@ -372,7 +381,7 @@ export async function POST(request: NextRequest) {
         seed: idx,
       }));
 
-      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams, structure);
+      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams);
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
 
       let courtSlotIdx = 0;
@@ -549,7 +558,7 @@ export async function POST(request: NextRequest) {
         seed: idx,
       }));
 
-      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams, structure);
+      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams);
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
 
       // Calculate games per round
