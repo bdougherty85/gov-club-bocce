@@ -142,9 +142,10 @@ export async function POST(request: NextRequest) {
 
       console.log(`Creating bracket: ${numTeams} teams, ${numFirstRoundGames} first-round games, ${rounds} rounds, hasBye: ${hasBye}`);
 
-      // Create first-round matchups - ALL teams must be assigned
-      // Seeding: 1vN, 2v(N-1), 3v(N-2), etc.
-      // If odd number, the middle seed gets a bye
+      // Simple algorithm: traverse teams and fill game slots
+      // Game 1: Team 0 vs Team 1
+      // Game 2: Team 2 vs Team 3
+      // Game N: Team X vs Team X+1 (or bye if odd)
       interface Matchup {
         homeTeamId: string;
         awayTeamId: string | null;
@@ -152,45 +153,22 @@ export async function POST(request: NextRequest) {
       }
 
       const firstRoundMatchups: Matchup[] = [];
+      let teamIndex = 0;
 
-      if (numTeams % 2 === 0) {
-        // Even: all teams paired, no bye
-        for (let i = 0; i < numTeams / 2; i++) {
-          firstRoundMatchups.push({
-            homeTeamId: allTeams[i].id,
-            awayTeamId: allTeams[numTeams - 1 - i].id,
-            position: i,
-          });
-        }
-      } else {
-        // Odd: pair teams, middle seed gets bye
-        // For 5 teams: 0v4, 1v3, 2 gets bye
-        const numFullGames = Math.floor(numTeams / 2);
-        for (let i = 0; i < numFullGames; i++) {
-          firstRoundMatchups.push({
-            homeTeamId: allTeams[i].id,
-            awayTeamId: allTeams[numTeams - 1 - i].id,
-            position: i,
-          });
-        }
-        // Bye for middle team
-        const byeTeamIndex = Math.floor(numTeams / 2);
+      for (let gamePos = 0; gamePos < numFirstRoundGames; gamePos++) {
+        const homeTeam = allTeams[teamIndex];
+        teamIndex++;
+
+        const awayTeam = teamIndex < numTeams ? allTeams[teamIndex] : null;
+        if (awayTeam) teamIndex++;
+
         firstRoundMatchups.push({
-          homeTeamId: allTeams[byeTeamIndex].id,
-          awayTeamId: null,
-          position: numFullGames,
+          homeTeamId: homeTeam.id,
+          awayTeamId: awayTeam?.id || null,
+          position: gamePos,
         });
       }
 
-      // Verify all teams are accounted for
-      const teamsInFirstRound = new Set<string>();
-      for (const matchup of firstRoundMatchups) {
-        teamsInFirstRound.add(matchup.homeTeamId);
-        if (matchup.awayTeamId) {
-          teamsInFirstRound.add(matchup.awayTeamId);
-        }
-      }
-      console.log(`Teams in first round: ${teamsInFirstRound.size} of ${numTeams}`);
       console.log('First round matchups:', firstRoundMatchups.map(m => ({
         home: allTeams.find(t => t.id === m.homeTeamId)?.name,
         away: m.awayTeamId ? allTeams.find(t => t.id === m.awayTeamId)?.name : 'BYE',
