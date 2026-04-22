@@ -62,7 +62,7 @@ export default function SchedulePage() {
     divisionIds: [] as string[],
     tournamentDate: '',
     timeSlotIds: [] as string[],
-    includePlayoffs: true,
+    format: 'pool_and_playoffs' as 'pool_and_playoffs' | 'single_elimination',
     teamsInPlayoffs: 4,
   });
 
@@ -235,7 +235,7 @@ export default function SchedulePage() {
         divisionIds: [],
         tournamentDate: '',
         timeSlotIds: [],
-        includePlayoffs: true,
+        format: 'pool_and_playoffs',
         teamsInPlayoffs: 4,
       });
     } catch (error) {
@@ -651,22 +651,40 @@ export default function SchedulePage() {
           </div>
 
           <div className="border-t pt-4">
-            <label className="flex items-center space-x-2 mb-4">
-              <input
-                type="checkbox"
-                checked={tournamentData.includePlayoffs}
-                onChange={(e) =>
-                  setTournamentData({ ...tournamentData, includePlayoffs: e.target.checked })
-                }
-                className="rounded border-border text-primary focus:ring-primary"
-              />
-              <span className="text-sm font-medium text-foreground">
-                Include playoff bracket
-              </span>
+            <label className="block text-sm font-medium text-foreground mb-3">
+              Tournament Format
             </label>
+            <div className="space-y-3">
+              <label className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+                <input
+                  type="radio"
+                  name="format"
+                  checked={tournamentData.format === 'pool_and_playoffs'}
+                  onChange={() => setTournamentData({ ...tournamentData, format: 'pool_and_playoffs' })}
+                  className="mt-1 border-border text-primary focus:ring-primary"
+                />
+                <div>
+                  <span className="text-foreground font-medium">Pool Play + Playoffs</span>
+                  <p className="text-sm text-muted">Round-robin pool play, then top teams advance to bracket</p>
+                </div>
+              </label>
+              <label className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+                <input
+                  type="radio"
+                  name="format"
+                  checked={tournamentData.format === 'single_elimination'}
+                  onChange={() => setTournamentData({ ...tournamentData, format: 'single_elimination' })}
+                  className="mt-1 border-border text-primary focus:ring-primary"
+                />
+                <div>
+                  <span className="text-foreground font-medium">Single Elimination</span>
+                  <p className="text-sm text-muted">All teams in one bracket, lose and you&apos;re out</p>
+                </div>
+              </label>
+            </div>
 
-            {tournamentData.includePlayoffs && (
-              <div className="pl-6">
+            {tournamentData.format === 'pool_and_playoffs' && (
+              <div className="mt-4 pl-6">
                 <Select
                   label="Teams in Playoffs"
                   value={tournamentData.teamsInPlayoffs.toString()}

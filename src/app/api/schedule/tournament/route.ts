@@ -92,8 +92,9 @@ export async function POST(request: NextRequest) {
       divisionIds,
       tournamentDate,
       timeSlotIds,
-      includePlayoffs = true,
+      format = 'pool_and_playoffs', // 'pool_and_playoffs' or 'single_elimination'
       teamsInPlayoffs = 4,
+      includePlayoffs = true, // backward compatibility
     } = body;
 
     // Support both single divisionId and multiple divisionIds
@@ -144,8 +145,105 @@ export async function POST(request: NextRequest) {
     const [year, month, day] = tournamentDate.split('-').map(Number);
     const gameDate = new Date(year, month - 1, day, 12, 0, 0);
 
-    // Collect all pool play games across all divisions
-    const allPoolGames: { home: string; away: string; seasonId: string; divisionName: string }[] = [];
+    const allTeams = divisions.flatMap((d) => d.teams);
+    const seasonId = divisions[0].seasonId;
+    const divisionNames = divisions.map((d) => d.name).join(', ');
+
+    // SINGLE ELIMINATION FORMAT - all teams in one bracket
+    if (format === 'single_elimination') {
+      if (allTeams.length < 2) {
+        return NextResponse.json(
+          { error: 'Need at least 2 teams for single elimination' },
+          { status: 400 }
+        );
+      }
+
+      const numTeams = allTeams.length;
+      const numRounds = calculateRounds(numTeams);
+
+      // Pad to nearest power of 2 for proper bracket
+      const bracketSize = Math.pow(2, numRounds);
+      const seededTeams = [...allTeams];
+
+      // Fill remaining spots with nulls (byes)
+      while (seededTeams.length < bracketSize) {
+        seededTeams.push(null as any);
+      }
+
+      const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
+      let slotIndex = 0;
+      let totalGames = 0;
+
+      // Create bracket games from finals back to first round
+      for (let round = numRounds; round >= 1; round--) {
+        const gamesInRound = Math.pow(2, numRounds - round);
+        const roundGames: { id: string; position: number }[] = [];
+
+        for (let position = 0; position < gamesInRound; position++) {
+          let nextGameId: string | null = null;
+          let nextGamePosition: 'home' | 'away' | null = null;
+
+          if (round < numRounds) {
+            const nextRoundGames = gamesByRound.get(round + 1);
+            if (nextRoundGames) {
+              const nextGameIndex = Math.floor(position / 2);
+              nextGameId = nextRoundGames[nextGameIndex]?.id || null;
+              nextGamePosition = position % 2 === 0 ? 'home' : 'away';
+            }
+          }
+
+          let homeTeamId: string | null = null;
+          let awayTeamId: string | null = null;
+
+          if (round === 1) {
+            const bracketPositions = getBracketSeeding(bracketSize);
+            const matchup = bracketPositions[position];
+            if (matchup) {
+              homeTeamId = seededTeams[matchup.home]?.id || null;
+              awayTeamId = seededTeams[matchup.away]?.id || null;
+            }
+          }
+
+          // Assign time slot for this game
+          const currentSlot = timeSlots[slotIndex % timeSlots.length];
+
+          const game = await prisma.game.create({
+            data: {
+              seasonId,
+              homeTeamId,
+              awayTeamId,
+              scheduledDate: gameDate,
+              timeSlotId: currentSlot.id,
+              courtId: currentSlot.courtId,
+              isPlayoff: true,
+              playoffRound: round,
+              playoffPosition: position,
+              nextGameId,
+              nextGamePosition,
+              status: 'scheduled',
+            },
+          });
+
+          roundGames.push({ id: game.id, position });
+          totalGames++;
+          slotIndex++;
+        }
+
+        gamesByRound.set(round, roundGames);
+      }
+
+      return NextResponse.json({
+        message: `Single elimination tournament created for ${divisionNames}: ${totalGames} bracket games, ${numRounds} rounds`,
+        bracketGamesCreated: totalGames,
+        totalGames,
+        rounds: numRounds,
+        teams: numTeams,
+        divisions: divisions.length,
+      });
+    }
+
+    // POOL PLAY + PLAYOFFS FORMAT
+    const allPoolGames: { home: string; away: string; seasonId: string }[] = [];
 
     for (const division of divisions) {
       if (division.teams.length < 2) continue;
@@ -159,7 +257,6 @@ export async function POST(request: NextRequest) {
             home,
             away,
             seasonId: division.seasonId,
-            divisionName: division.name,
           });
         });
       });
@@ -175,7 +272,7 @@ export async function POST(request: NextRequest) {
     const games = [];
     let slotIndex = 0;
 
-    // Assign pool play games to time slots (round-robin through slots)
+    // Assign pool play games to time slots
     for (const poolGame of allPoolGames) {
       const currentSlot = timeSlots[slotIndex % timeSlots.length];
 
@@ -199,78 +296,68 @@ export async function POST(request: NextRequest) {
     let playoffGames = 0;
 
     // Generate playoff bracket if requested
-    if (includePlayoffs && teamsInPlayoffs >= 2) {
-      // Collect all teams across divisions for playoffs
-      const allTeams = divisions.flatMap((d) => d.teams);
-      const seasonId = divisions[0].seasonId;
+    if (includePlayoffs && teamsInPlayoffs >= 2 && allTeams.length >= 2) {
+      const numTeamsForPlayoffs = Math.min(teamsInPlayoffs, allTeams.length);
+      const numRounds = calculateRounds(numTeamsForPlayoffs);
+      const seededTeams = allTeams.slice(0, numTeamsForPlayoffs);
 
-      if (allTeams.length >= 2) {
-        const numTeamsForPlayoffs = Math.min(teamsInPlayoffs, allTeams.length);
-        const numRounds = calculateRounds(numTeamsForPlayoffs);
-        const seededTeams = allTeams.slice(0, numTeamsForPlayoffs);
+      const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
 
-        // Create playoff games using remaining time slots
-        const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
+      for (let round = numRounds; round >= 1; round--) {
+        const gamesInRound = Math.pow(2, numRounds - round);
+        const roundGames: { id: string; position: number }[] = [];
 
-        for (let round = numRounds; round >= 1; round--) {
-          const gamesInRound = Math.pow(2, numRounds - round);
-          const roundGames: { id: string; position: number }[] = [];
+        for (let position = 0; position < gamesInRound; position++) {
+          let nextGameId: string | null = null;
+          let nextGamePosition: 'home' | 'away' | null = null;
 
-          for (let position = 0; position < gamesInRound; position++) {
-            let nextGameId: string | null = null;
-            let nextGamePosition: 'home' | 'away' | null = null;
-
-            if (round < numRounds) {
-              const nextRoundGames = gamesByRound.get(round + 1);
-              if (nextRoundGames) {
-                const nextGameIndex = Math.floor(position / 2);
-                nextGameId = nextRoundGames[nextGameIndex]?.id || null;
-                nextGamePosition = position % 2 === 0 ? 'home' : 'away';
-              }
+          if (round < numRounds) {
+            const nextRoundGames = gamesByRound.get(round + 1);
+            if (nextRoundGames) {
+              const nextGameIndex = Math.floor(position / 2);
+              nextGameId = nextRoundGames[nextGameIndex]?.id || null;
+              nextGamePosition = position % 2 === 0 ? 'home' : 'away';
             }
-
-            let homeTeamId: string | null = null;
-            let awayTeamId: string | null = null;
-
-            if (round === 1) {
-              const bracketPositions = getBracketSeeding(numTeamsForPlayoffs);
-              const matchup = bracketPositions[position];
-              if (matchup) {
-                homeTeamId = seededTeams[matchup.home]?.id || null;
-                awayTeamId = seededTeams[matchup.away]?.id || null;
-              }
-            }
-
-            // Use time slots for playoff rounds
-            const slotForRound = timeSlots[(slotIndex + round - 1) % timeSlots.length];
-
-            const game = await prisma.game.create({
-              data: {
-                seasonId,
-                homeTeamId,
-                awayTeamId,
-                scheduledDate: gameDate,
-                timeSlotId: slotForRound.id,
-                courtId: slotForRound.courtId,
-                isPlayoff: true,
-                playoffRound: round,
-                playoffPosition: position,
-                nextGameId,
-                nextGamePosition,
-                status: 'scheduled',
-              },
-            });
-
-            roundGames.push({ id: game.id, position });
-            playoffGames++;
           }
 
-          gamesByRound.set(round, roundGames);
+          let homeTeamId: string | null = null;
+          let awayTeamId: string | null = null;
+
+          if (round === 1) {
+            const bracketPositions = getBracketSeeding(numTeamsForPlayoffs);
+            const matchup = bracketPositions[position];
+            if (matchup) {
+              homeTeamId = seededTeams[matchup.home]?.id || null;
+              awayTeamId = seededTeams[matchup.away]?.id || null;
+            }
+          }
+
+          const slotForRound = timeSlots[(slotIndex + round - 1) % timeSlots.length];
+
+          const game = await prisma.game.create({
+            data: {
+              seasonId,
+              homeTeamId,
+              awayTeamId,
+              scheduledDate: gameDate,
+              timeSlotId: slotForRound.id,
+              courtId: slotForRound.courtId,
+              isPlayoff: true,
+              playoffRound: round,
+              playoffPosition: position,
+              nextGameId,
+              nextGamePosition,
+              status: 'scheduled',
+            },
+          });
+
+          roundGames.push({ id: game.id, position });
+          playoffGames++;
         }
+
+        gamesByRound.set(round, roundGames);
       }
     }
-
-    const divisionNames = divisions.map((d) => d.name).join(', ');
 
     return NextResponse.json({
       message: `Tournament created for ${divisionNames}: ${games.length} pool play games${playoffGames > 0 ? ` and ${playoffGames} playoff games` : ''}`,
