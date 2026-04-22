@@ -1,88 +1,300 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-// Round-robin scheduling algorithm for pool play
-function generateRoundRobin(teams: string[]): [string, string][][] {
-  const n = teams.length;
-  const rounds: [string, string][][] = [];
+interface TeamScheduleState {
+  id: string;
+  lastPlayedSlotIndex: number; // -1 means hasn't played yet
+  gamesPlayed: number;
+}
 
-  // If odd number of teams, add a "bye" placeholder
+interface CourtSlot {
+  timeSlotId: string;
+  courtId: string;
+  courtName: string;
+  startTime: string;
+  slotIndex: number; // Global ordering index
+}
+
+// Group time slots by start time and create court slots
+function createCourtSlots(
+  timeSlots: { id: string; startTime: string; courtId: string | null; court: { id: string; name: string } | null }[]
+): CourtSlot[] {
+  const slots: CourtSlot[] = [];
+
+  // Sort by start time
+  const sorted = [...timeSlots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  // Group by start time
+  const byTime = new Map<string, typeof sorted>();
+  for (const slot of sorted) {
+    const time = slot.startTime;
+    if (!byTime.has(time)) {
+      byTime.set(time, []);
+    }
+    byTime.get(time)!.push(slot);
+  }
+
+  // Create court slots with global index
+  let slotIndex = 0;
+  for (const [startTime, timeSlotGroup] of Array.from(byTime.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    for (const ts of timeSlotGroup) {
+      if (ts.courtId && ts.court) {
+        slots.push({
+          timeSlotId: ts.id,
+          courtId: ts.courtId,
+          courtName: ts.court.name,
+          startTime,
+          slotIndex,
+        });
+      }
+    }
+    // All courts at same time share the same slot index (they run concurrently)
+    slotIndex++;
+  }
+
+  return slots;
+}
+
+// Get available courts for a given slot index
+function getCourtsAtSlotIndex(courtSlots: CourtSlot[], slotIndex: number): CourtSlot[] {
+  return courtSlots.filter(cs => cs.slotIndex === slotIndex);
+}
+
+// Get the maximum slot index
+function getMaxSlotIndex(courtSlots: CourtSlot[]): number {
+  return Math.max(...courtSlots.map(cs => cs.slotIndex), -1);
+}
+
+// Round-robin scheduling with fair team rotation
+function generateFairRoundRobin(
+  teams: string[],
+  courtSlots: CourtSlot[]
+): { home: string; away: string; courtSlot: CourtSlot }[] {
+  const n = teams.length;
+  if (n < 2) return [];
+
+  // Generate all matchups using round-robin algorithm
+  const allMatchups: [string, string][] = [];
   const teamList = n % 2 === 0 ? [...teams] : [...teams, 'BYE'];
   const numTeams = teamList.length;
   const numRounds = numTeams - 1;
   const halfSize = numTeams / 2;
-
   const teamIndices = teamList.map((_, i) => i);
 
   for (let round = 0; round < numRounds; round++) {
-    const roundMatches: [string, string][] = [];
-
     for (let i = 0; i < halfSize; i++) {
       const home = teamIndices[i];
       const away = teamIndices[numTeams - 1 - i];
 
-      // Skip bye games
       if (teamList[home] !== 'BYE' && teamList[away] !== 'BYE') {
         if (round % 2 === 0) {
-          roundMatches.push([teamList[home], teamList[away]]);
+          allMatchups.push([teamList[home], teamList[away]]);
         } else {
-          roundMatches.push([teamList[away], teamList[home]]);
+          allMatchups.push([teamList[away], teamList[home]]);
         }
       }
     }
-
-    rounds.push(roundMatches);
     const last = teamIndices.pop()!;
     teamIndices.splice(1, 0, last);
   }
 
-  return rounds;
-}
-
-// Generate bracket seeding
-function getBracketSeeding(numTeams: number): { home: number; away: number }[] {
-  const matchups: { home: number; away: number }[] = [];
-
-  if (numTeams <= 2) {
-    return [{ home: 0, away: 1 }];
+  // Now schedule games fairly - teams that haven't played recently go first
+  const teamState: Map<string, TeamScheduleState> = new Map();
+  for (const teamId of teams) {
+    teamState.set(teamId, { id: teamId, lastPlayedSlotIndex: -1, gamesPlayed: 0 });
   }
 
-  const numFirstRoundGames = Math.floor(numTeams / 2);
-  const seedOrder = generateSeedOrder(numFirstRoundGames);
+  const scheduledGames: { home: string; away: string; courtSlot: CourtSlot }[] = [];
+  const remainingMatchups = [...allMatchups];
+  const maxSlotIndex = getMaxSlotIndex(courtSlots);
 
-  for (let i = 0; i < numFirstRoundGames; i++) {
-    const topSeed = seedOrder[i * 2];
-    const bottomSeed = seedOrder[i * 2 + 1];
-    matchups.push({ home: topSeed, away: bottomSeed });
+  let currentSlotIndex = 0;
+
+  while (remainingMatchups.length > 0 && currentSlotIndex <= maxSlotIndex * 2) {
+    const courtsAtSlot = getCourtsAtSlotIndex(courtSlots, currentSlotIndex % (maxSlotIndex + 1));
+
+    if (courtsAtSlot.length === 0) {
+      currentSlotIndex++;
+      continue;
+    }
+
+    // Find games where both teams haven't played this slot
+    // Prioritize teams that have waited longest
+    const eligibleGames = remainingMatchups
+      .map((matchup, index) => {
+        const [home, away] = matchup;
+        const homeState = teamState.get(home)!;
+        const awayState = teamState.get(away)!;
+
+        // Can't play if either team played in the previous slot
+        const homeCanPlay = homeState.lastPlayedSlotIndex < currentSlotIndex;
+        const awayCanPlay = awayState.lastPlayedSlotIndex < currentSlotIndex;
+
+        if (!homeCanPlay || !awayCanPlay) return null;
+
+        // Priority: sum of wait time (higher = waited longer)
+        const homeWait = currentSlotIndex - homeState.lastPlayedSlotIndex;
+        const awayWait = currentSlotIndex - awayState.lastPlayedSlotIndex;
+        const priority = homeWait + awayWait;
+
+        return { matchup, index, priority };
+      })
+      .filter((g): g is NonNullable<typeof g> => g !== null)
+      .sort((a, b) => b.priority - a.priority); // Highest priority first
+
+    // Schedule as many games as we have courts
+    const gamesToSchedule = eligibleGames.slice(0, courtsAtSlot.length);
+
+    if (gamesToSchedule.length === 0) {
+      // No eligible games for this slot, move to next
+      currentSlotIndex++;
+      continue;
+    }
+
+    // Schedule the games
+    for (let i = 0; i < gamesToSchedule.length; i++) {
+      const game = gamesToSchedule[i];
+      const courtSlot = courtsAtSlot[i];
+      const [home, away] = game.matchup;
+
+      scheduledGames.push({ home, away, courtSlot });
+
+      // Update team state
+      teamState.get(home)!.lastPlayedSlotIndex = currentSlotIndex;
+      teamState.get(home)!.gamesPlayed++;
+      teamState.get(away)!.lastPlayedSlotIndex = currentSlotIndex;
+      teamState.get(away)!.gamesPlayed++;
+
+      // Remove from remaining
+      const idx = remainingMatchups.indexOf(game.matchup);
+      if (idx > -1) remainingMatchups.splice(idx, 1);
+    }
+
+    currentSlotIndex++;
+  }
+
+  // If we still have remaining matchups, we need more time slots
+  // Cycle through available court slots
+  if (remainingMatchups.length > 0) {
+    let courtIdx = 0;
+    for (const matchup of remainingMatchups) {
+      const [home, away] = matchup;
+      const courtSlot = courtSlots[courtIdx % courtSlots.length];
+      scheduledGames.push({ home, away, courtSlot });
+      courtIdx++;
+    }
+  }
+
+  return scheduledGames;
+}
+
+// Calculate bracket structure for N teams
+// Returns: { firstRoundGames, byes, totalRounds }
+function calculateBracketStructure(numTeams: number): {
+  firstRoundGames: number;
+  byes: number;
+  totalRounds: number;
+  bracketSize: number;
+} {
+  if (numTeams < 2) {
+    return { firstRoundGames: 0, byes: 0, totalRounds: 0, bracketSize: 0 };
+  }
+
+  const totalRounds = Math.ceil(Math.log2(numTeams));
+  const bracketSize = Math.pow(2, totalRounds);
+  const byes = bracketSize - numTeams;
+  const firstRoundGames = (numTeams - byes) / 2; // Teams that play in first round
+
+  // Actually: first round games = bracketSize/2 - byes that skip first round
+  // If 8 teams, bracketSize=8, byes=0, firstRoundGames = 4
+  // If 7 teams, bracketSize=8, byes=1, firstRoundGames = 3 (6 teams play, 1 bye to round 2)
+  // If 6 teams, bracketSize=8, byes=2, firstRoundGames = 2 (4 teams play, 2 bye to round 2)
+  // If 5 teams, bracketSize=8, byes=3, firstRoundGames = 1 (2 teams play, 3 bye to round 2)
+
+  // Formula: firstRoundGames = numTeams - bracketSize/2
+  const actualFirstRoundGames = numTeams - bracketSize / 2;
+
+  return {
+    firstRoundGames: Math.max(0, actualFirstRoundGames),
+    byes,
+    totalRounds,
+    bracketSize,
+  };
+}
+
+// Generate seeding for first round - top seeds get byes
+function generateFirstRoundMatchups(
+  teams: { id: string; seed: number }[],
+  structure: ReturnType<typeof calculateBracketStructure>
+): { homeTeamId: string | null; awayTeamId: string | null; position: number }[] {
+  const { firstRoundGames, byes, bracketSize } = structure;
+
+  if (teams.length < 2) return [];
+
+  const matchups: { homeTeamId: string | null; awayTeamId: string | null; position: number }[] = [];
+  const halfBracket = bracketSize / 2;
+
+  // Top seeds (1 through byes) get byes
+  // Remaining teams play in first round
+
+  // Standard bracket seeding for first round:
+  // Position 0: Seed 1 vs Seed 8 (if no byes) or Seed 1 bye
+  // Position 1: Seed 4 vs Seed 5
+  // Position 2: Seed 3 vs Seed 6
+  // Position 3: Seed 2 vs Seed 7
+
+  // For 8 team bracket positions: 1v8, 4v5, 3v6, 2v7
+  const standardSeeding8 = [
+    [0, 7], // 1 vs 8
+    [3, 4], // 4 vs 5
+    [2, 5], // 3 vs 6
+    [1, 6], // 2 vs 7
+  ];
+
+  // For 4 team bracket: 1v4, 2v3
+  const standardSeeding4 = [
+    [0, 3], // 1 vs 4
+    [1, 2], // 2 vs 3
+  ];
+
+  // For 2 team bracket: 1v2
+  const standardSeeding2 = [
+    [0, 1], // 1 vs 2
+  ];
+
+  // Use appropriate seeding based on bracket size
+  let seedPattern: number[][];
+  if (halfBracket === 4) {
+    seedPattern = standardSeeding8;
+  } else if (halfBracket === 2) {
+    seedPattern = standardSeeding4;
+  } else if (halfBracket === 1) {
+    seedPattern = standardSeeding2;
+  } else {
+    // Generate pattern for larger brackets
+    seedPattern = [];
+    for (let i = 0; i < halfBracket; i++) {
+      seedPattern.push([i, bracketSize - 1 - i]);
+    }
+  }
+
+  for (let position = 0; position < halfBracket; position++) {
+    const [homeSeed, awaySeed] = seedPattern[position] || [position, bracketSize - 1 - position];
+
+    const homeTeam = teams.find(t => t.seed === homeSeed);
+    const awayTeam = teams.find(t => t.seed === awaySeed);
+
+    // Only create a game if at least one team exists (not a double-bye)
+    if (homeTeam || awayTeam) {
+      matchups.push({
+        homeTeamId: homeTeam?.id || null,
+        awayTeamId: awayTeam?.id || null,
+        position,
+      });
+    }
   }
 
   return matchups;
-}
-
-function generateSeedOrder(numGames: number): number[] {
-  const numTeams = numGames * 2;
-
-  if (numGames === 1) {
-    return [0, 1];
-  }
-
-  const seeds: number[] = [];
-
-  function fillBracket(position: number, size: number, seed: number) {
-    if (size === 1) {
-      seeds[position] = seed;
-      return;
-    }
-    fillBracket(position, size / 2, seed);
-    fillBracket(position + size / 2, size / 2, size * 2 - seed - 1);
-  }
-
-  fillBracket(0, numTeams, 0);
-  return seeds;
-}
-
-function calculateRounds(numTeams: number): number {
-  return Math.ceil(Math.log2(numTeams));
 }
 
 export async function POST(request: NextRequest) {
@@ -92,12 +304,11 @@ export async function POST(request: NextRequest) {
       divisionIds,
       tournamentDate,
       timeSlotIds,
-      format = 'pool_and_playoffs', // 'pool_and_playoffs' or 'single_elimination'
+      format = 'pool_and_playoffs',
       teamsInPlayoffs = 4,
-      includePlayoffs = true, // backward compatibility
+      includePlayoffs = true,
     } = body;
 
-    // Support both single divisionId and multiple divisionIds
     const divisionIdList = divisionIds || (body.divisionId ? [body.divisionId] : []);
 
     if (divisionIdList.length === 0 || !tournamentDate) {
@@ -127,21 +338,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No divisions found' }, { status: 404 });
     }
 
-    // Get the time slots sorted by time
+    // Get the time slots with courts
     const timeSlots = await prisma.timeSlot.findMany({
       where: { id: { in: timeSlotIds } },
       include: { court: true },
       orderBy: { startTime: 'asc' },
     });
 
-    if (timeSlots.length === 0) {
+    // Filter to only time slots that have courts assigned
+    const timeSlotsWithCourts = timeSlots.filter(ts => ts.courtId && ts.court);
+
+    if (timeSlotsWithCourts.length === 0) {
       return NextResponse.json(
-        { error: 'No valid time slots found' },
+        { error: 'No time slots with courts assigned. Each time slot must have a court.' },
         { status: 400 }
       );
     }
 
-    // Parse the tournament date (avoid timezone issues)
+    // Create court slots structure
+    const courtSlots = createCourtSlots(timeSlotsWithCourts);
+
+    if (courtSlots.length === 0) {
+      return NextResponse.json(
+        { error: 'No courts available. Please assign courts to time slots.' },
+        { status: 400 }
+      );
+    }
+
+    // Parse the tournament date
     const [year, month, day] = tournamentDate.split('-').map(Number);
     const gameDate = new Date(year, month - 1, day, 12, 0, 0);
 
@@ -149,7 +373,13 @@ export async function POST(request: NextRequest) {
     const seasonId = divisions[0].seasonId;
     const divisionNames = divisions.map((d) => d.name).join(', ');
 
-    // SINGLE ELIMINATION FORMAT - all teams in one bracket
+    // Calculate total courts available per time block
+    const courtsPerTimeBlock = new Map<string, number>();
+    for (const slot of courtSlots) {
+      courtsPerTimeBlock.set(slot.startTime, (courtsPerTimeBlock.get(slot.startTime) || 0) + 1);
+    }
+
+    // SINGLE ELIMINATION FORMAT
     if (format === 'single_elimination') {
       if (allTeams.length < 2) {
         return NextResponse.json(
@@ -159,53 +389,43 @@ export async function POST(request: NextRequest) {
       }
 
       const numTeams = allTeams.length;
-      const numRounds = calculateRounds(numTeams);
+      const structure = calculateBracketStructure(numTeams);
 
-      // Pad to nearest power of 2 for proper bracket
-      const bracketSize = Math.pow(2, numRounds);
-      const seededTeams = [...allTeams];
+      // Seed teams (for now, use order they appear - could be based on standings later)
+      const seededTeams = allTeams.map((team, idx) => ({
+        id: team.id,
+        seed: idx,
+      }));
 
-      // Fill remaining spots with nulls (byes)
-      while (seededTeams.length < bracketSize) {
-        seededTeams.push(null as any);
-      }
-
+      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams, structure);
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
-      let slotIndex = 0;
+
+      let courtSlotIdx = 0;
       let totalGames = 0;
 
-      // Create bracket games from finals back to first round
-      for (let round = numRounds; round >= 1; round--) {
-        const gamesInRound = Math.pow(2, numRounds - round);
+      // Create games from first round forward
+      // Round 1 is first round, highest round is finals
+      for (let round = 1; round <= structure.totalRounds; round++) {
+        const gamesInRound = Math.pow(2, structure.totalRounds - round);
         const roundGames: { id: string; position: number }[] = [];
 
         for (let position = 0; position < gamesInRound; position++) {
-          let nextGameId: string | null = null;
-          let nextGamePosition: 'home' | 'away' | null = null;
-
-          if (round < numRounds) {
-            const nextRoundGames = gamesByRound.get(round + 1);
-            if (nextRoundGames) {
-              const nextGameIndex = Math.floor(position / 2);
-              nextGameId = nextRoundGames[nextGameIndex]?.id || null;
-              nextGamePosition = position % 2 === 0 ? 'home' : 'away';
-            }
-          }
-
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
 
           if (round === 1) {
-            const bracketPositions = getBracketSeeding(bracketSize);
-            const matchup = bracketPositions[position];
+            // First round - use generated matchups
+            const matchup = firstRoundMatchups.find(m => m.position === position);
             if (matchup) {
-              homeTeamId = seededTeams[matchup.home]?.id || null;
-              awayTeamId = seededTeams[matchup.away]?.id || null;
+              homeTeamId = matchup.homeTeamId;
+              awayTeamId = matchup.awayTeamId;
             }
           }
+          // Later rounds start with TBD teams (filled when previous round completes)
 
-          // Assign time slot for this game
-          const currentSlot = timeSlots[slotIndex % timeSlots.length];
+          // Get court for this game (cycle through available courts)
+          const courtSlot = courtSlots[courtSlotIdx % courtSlots.length];
+          courtSlotIdx++;
 
           const game = await prisma.game.create({
             data: {
@@ -213,84 +433,124 @@ export async function POST(request: NextRequest) {
               homeTeamId,
               awayTeamId,
               scheduledDate: gameDate,
-              timeSlotId: currentSlot.id,
-              courtId: currentSlot.courtId,
+              timeSlotId: courtSlot.timeSlotId,
+              courtId: courtSlot.courtId,
               isPlayoff: true,
               playoffRound: round,
               playoffPosition: position,
-              nextGameId,
-              nextGamePosition,
+              nextGameId: null, // Will update after all games created
+              nextGamePosition: null,
               status: 'scheduled',
             },
           });
 
           roundGames.push({ id: game.id, position });
           totalGames++;
-          slotIndex++;
         }
 
         gamesByRound.set(round, roundGames);
       }
 
+      // Now update nextGameId references
+      for (let round = 1; round < structure.totalRounds; round++) {
+        const currentRoundGames = gamesByRound.get(round) || [];
+        const nextRoundGames = gamesByRound.get(round + 1) || [];
+
+        for (const game of currentRoundGames) {
+          const nextGameIndex = Math.floor(game.position / 2);
+          const nextGame = nextRoundGames[nextGameIndex];
+          const nextGamePosition = game.position % 2 === 0 ? 'home' : 'away';
+
+          if (nextGame) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: {
+                nextGameId: nextGame.id,
+                nextGamePosition,
+              },
+            });
+          }
+        }
+      }
+
+      // Handle byes - if a first round game has only one team, auto-advance them
+      const firstRoundGames = gamesByRound.get(1) || [];
+      for (const gameRef of firstRoundGames) {
+        const game = await prisma.game.findUnique({
+          where: { id: gameRef.id },
+          include: { homeTeam: true, awayTeam: true },
+        });
+
+        if (game && game.nextGameId) {
+          // If only home team exists (away is bye)
+          if (game.homeTeamId && !game.awayTeamId) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: { status: 'completed', homeScore: 1, awayScore: 0 },
+            });
+            // Advance home team to next game
+            const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
+            await prisma.game.update({
+              where: { id: game.nextGameId },
+              data: { [updateField]: game.homeTeamId },
+            });
+          }
+          // If only away team exists (home is bye)
+          else if (!game.homeTeamId && game.awayTeamId) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: { status: 'completed', homeScore: 0, awayScore: 1 },
+            });
+            // Advance away team to next game
+            const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
+            await prisma.game.update({
+              where: { id: game.nextGameId },
+              data: { [updateField]: game.awayTeamId },
+            });
+          }
+        }
+      }
+
       return NextResponse.json({
-        message: `Single elimination tournament created for ${divisionNames}: ${totalGames} bracket games, ${numRounds} rounds`,
+        message: `Single elimination tournament created for ${divisionNames}: ${totalGames} bracket games, ${structure.totalRounds} rounds`,
         bracketGamesCreated: totalGames,
         totalGames,
-        rounds: numRounds,
+        rounds: structure.totalRounds,
         teams: numTeams,
+        byes: structure.byes,
         divisions: divisions.length,
       });
     }
 
     // POOL PLAY + PLAYOFFS FORMAT
-    const allPoolGames: { home: string; away: string; seasonId: string }[] = [];
+    const allTeamIds = allTeams.map(t => t.id);
+    const scheduledPoolGames = generateFairRoundRobin(allTeamIds, courtSlots);
 
-    for (const division of divisions) {
-      if (division.teams.length < 2) continue;
-
-      const teamIds = division.teams.map((t) => t.id);
-      const rounds = generateRoundRobin(teamIds);
-
-      rounds.forEach((round) => {
-        round.forEach(([home, away]) => {
-          allPoolGames.push({
-            home,
-            away,
-            seasonId: division.seasonId,
-          });
-        });
-      });
-    }
-
-    if (allPoolGames.length === 0) {
+    if (scheduledPoolGames.length === 0) {
       return NextResponse.json(
-        { error: 'No games to schedule (divisions need at least 2 teams each)' },
+        { error: 'No games to schedule (need at least 2 teams)' },
         { status: 400 }
       );
     }
 
     const games = [];
-    let slotIndex = 0;
 
-    // Assign pool play games to time slots
-    for (const poolGame of allPoolGames) {
-      const currentSlot = timeSlots[slotIndex % timeSlots.length];
-
+    // Create pool play games
+    for (const poolGame of scheduledPoolGames) {
       const createdGame = await prisma.game.create({
         data: {
-          seasonId: poolGame.seasonId,
+          seasonId,
           homeTeamId: poolGame.home,
           awayTeamId: poolGame.away,
           scheduledDate: gameDate,
-          timeSlotId: currentSlot.id,
-          courtId: currentSlot.courtId,
+          timeSlotId: poolGame.courtSlot.timeSlotId,
+          courtId: poolGame.courtSlot.courtId,
           weekNumber: 1,
           isPlayoff: false,
           status: 'scheduled',
         },
       });
       games.push(createdGame);
-      slotIndex++;
     }
 
     let playoffGames = 0;
@@ -298,41 +558,38 @@ export async function POST(request: NextRequest) {
     // Generate playoff bracket if requested
     if (includePlayoffs && teamsInPlayoffs >= 2 && allTeams.length >= 2) {
       const numTeamsForPlayoffs = Math.min(teamsInPlayoffs, allTeams.length);
-      const numRounds = calculateRounds(numTeamsForPlayoffs);
-      const seededTeams = allTeams.slice(0, numTeamsForPlayoffs);
+      const structure = calculateBracketStructure(numTeamsForPlayoffs);
 
+      // Seed teams (order determines seeding - could be based on pool standings later)
+      const seededTeams = allTeams.slice(0, numTeamsForPlayoffs).map((team, idx) => ({
+        id: team.id,
+        seed: idx,
+      }));
+
+      const firstRoundMatchups = generateFirstRoundMatchups(seededTeams, structure);
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
 
-      for (let round = numRounds; round >= 1; round--) {
-        const gamesInRound = Math.pow(2, numRounds - round);
+      // Start playoff court slots after pool play
+      let courtSlotIdx = scheduledPoolGames.length;
+
+      for (let round = 1; round <= structure.totalRounds; round++) {
+        const gamesInRound = Math.pow(2, structure.totalRounds - round);
         const roundGames: { id: string; position: number }[] = [];
 
         for (let position = 0; position < gamesInRound; position++) {
-          let nextGameId: string | null = null;
-          let nextGamePosition: 'home' | 'away' | null = null;
-
-          if (round < numRounds) {
-            const nextRoundGames = gamesByRound.get(round + 1);
-            if (nextRoundGames) {
-              const nextGameIndex = Math.floor(position / 2);
-              nextGameId = nextRoundGames[nextGameIndex]?.id || null;
-              nextGamePosition = position % 2 === 0 ? 'home' : 'away';
-            }
-          }
-
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
 
           if (round === 1) {
-            const bracketPositions = getBracketSeeding(numTeamsForPlayoffs);
-            const matchup = bracketPositions[position];
+            const matchup = firstRoundMatchups.find(m => m.position === position);
             if (matchup) {
-              homeTeamId = seededTeams[matchup.home]?.id || null;
-              awayTeamId = seededTeams[matchup.away]?.id || null;
+              homeTeamId = matchup.homeTeamId;
+              awayTeamId = matchup.awayTeamId;
             }
           }
 
-          const slotForRound = timeSlots[(slotIndex + round - 1) % timeSlots.length];
+          const courtSlot = courtSlots[courtSlotIdx % courtSlots.length];
+          courtSlotIdx++;
 
           const game = await prisma.game.create({
             data: {
@@ -340,13 +597,11 @@ export async function POST(request: NextRequest) {
               homeTeamId,
               awayTeamId,
               scheduledDate: gameDate,
-              timeSlotId: slotForRound.id,
-              courtId: slotForRound.courtId,
+              timeSlotId: courtSlot.timeSlotId,
+              courtId: courtSlot.courtId,
               isPlayoff: true,
               playoffRound: round,
               playoffPosition: position,
-              nextGameId,
-              nextGamePosition,
               status: 'scheduled',
             },
           });
@@ -357,6 +612,61 @@ export async function POST(request: NextRequest) {
 
         gamesByRound.set(round, roundGames);
       }
+
+      // Update nextGameId references
+      for (let round = 1; round < structure.totalRounds; round++) {
+        const currentRoundGames = gamesByRound.get(round) || [];
+        const nextRoundGames = gamesByRound.get(round + 1) || [];
+
+        for (const game of currentRoundGames) {
+          const nextGameIndex = Math.floor(game.position / 2);
+          const nextGame = nextRoundGames[nextGameIndex];
+          const nextGamePosition = game.position % 2 === 0 ? 'home' : 'away';
+
+          if (nextGame) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: {
+                nextGameId: nextGame.id,
+                nextGamePosition,
+              },
+            });
+          }
+        }
+      }
+
+      // Handle byes for first round
+      const firstRoundGames = gamesByRound.get(1) || [];
+      for (const gameRef of firstRoundGames) {
+        const game = await prisma.game.findUnique({
+          where: { id: gameRef.id },
+          include: { homeTeam: true, awayTeam: true },
+        });
+
+        if (game && game.nextGameId) {
+          if (game.homeTeamId && !game.awayTeamId) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: { status: 'completed', homeScore: 1, awayScore: 0 },
+            });
+            const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
+            await prisma.game.update({
+              where: { id: game.nextGameId },
+              data: { [updateField]: game.homeTeamId },
+            });
+          } else if (!game.homeTeamId && game.awayTeamId) {
+            await prisma.game.update({
+              where: { id: game.id },
+              data: { status: 'completed', homeScore: 0, awayScore: 1 },
+            });
+            const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
+            await prisma.game.update({
+              where: { id: game.nextGameId },
+              data: { [updateField]: game.awayTeamId },
+            });
+          }
+        }
+      }
     }
 
     return NextResponse.json({
@@ -365,6 +675,7 @@ export async function POST(request: NextRequest) {
       playoffGamesCreated: playoffGames,
       totalGames: games.length + playoffGames,
       divisions: divisions.length,
+      courtsUsed: courtSlots.length,
     });
   } catch (error) {
     console.error('Error creating tournament:', error);
