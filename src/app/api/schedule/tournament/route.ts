@@ -197,109 +197,67 @@ function generateFairRoundRobin(
 }
 
 // Calculate bracket structure for N teams
-// Returns: { firstRoundGames, byes, totalRounds }
+// First round has ceil(numTeams / 2) games
+// If odd number of teams, one game has a bye (TBD)
 function calculateBracketStructure(numTeams: number): {
   firstRoundGames: number;
-  byes: number;
+  hasBye: boolean;
   totalRounds: number;
-  bracketSize: number;
 } {
   if (numTeams < 2) {
-    return { firstRoundGames: 0, byes: 0, totalRounds: 0, bracketSize: 0 };
+    return { firstRoundGames: 0, hasBye: false, totalRounds: 0 };
   }
 
-  const totalRounds = Math.ceil(Math.log2(numTeams));
-  const bracketSize = Math.pow(2, totalRounds);
-  const byes = bracketSize - numTeams;
-  const firstRoundGames = (numTeams - byes) / 2; // Teams that play in first round
+  // First round has ceil(numTeams / 2) games
+  // 8 teams = 4 games, 7 teams = 4 games (1 bye), 6 teams = 3 games, 5 teams = 3 games (1 bye)
+  const firstRoundGames = Math.ceil(numTeams / 2);
+  const hasBye = numTeams % 2 === 1;
 
-  // Actually: first round games = bracketSize/2 - byes that skip first round
-  // If 8 teams, bracketSize=8, byes=0, firstRoundGames = 4
-  // If 7 teams, bracketSize=8, byes=1, firstRoundGames = 3 (6 teams play, 1 bye to round 2)
-  // If 6 teams, bracketSize=8, byes=2, firstRoundGames = 2 (4 teams play, 2 bye to round 2)
-  // If 5 teams, bracketSize=8, byes=3, firstRoundGames = 1 (2 teams play, 3 bye to round 2)
-
-  // Formula: firstRoundGames = numTeams - bracketSize/2
-  const actualFirstRoundGames = numTeams - bracketSize / 2;
+  // Calculate total rounds needed
+  // After first round, we have firstRoundGames winners
+  // Keep halving until we get to 1
+  let teamsRemaining = firstRoundGames;
+  let totalRounds = 1;
+  while (teamsRemaining > 1) {
+    teamsRemaining = Math.ceil(teamsRemaining / 2);
+    totalRounds++;
+  }
 
   return {
-    firstRoundGames: Math.max(0, actualFirstRoundGames),
-    byes,
+    firstRoundGames,
+    hasBye,
     totalRounds,
-    bracketSize,
   };
 }
 
-// Generate seeding for first round - top seeds get byes
+// Generate seeding for first round
+// Simple approach: pair teams 1v2, 3v4, 5v6, etc. (or 1vN, 2v(N-1) for seeded)
 function generateFirstRoundMatchups(
   teams: { id: string; seed: number }[],
   structure: ReturnType<typeof calculateBracketStructure>
 ): { homeTeamId: string | null; awayTeamId: string | null; position: number }[] {
-  const { firstRoundGames, byes, bracketSize } = structure;
+  const { firstRoundGames, hasBye } = structure;
 
   if (teams.length < 2) return [];
 
   const matchups: { homeTeamId: string | null; awayTeamId: string | null; position: number }[] = [];
-  const halfBracket = bracketSize / 2;
+  const numTeams = teams.length;
 
-  // Top seeds (1 through byes) get byes
-  // Remaining teams play in first round
+  // Sort teams by seed
+  const sortedTeams = [...teams].sort((a, b) => a.seed - b.seed);
 
-  // Standard bracket seeding for first round:
-  // Position 0: Seed 1 vs Seed 8 (if no byes) or Seed 1 bye
-  // Position 1: Seed 4 vs Seed 5
-  // Position 2: Seed 3 vs Seed 6
-  // Position 3: Seed 2 vs Seed 7
+  // Pair teams: best vs worst for competitive balance
+  // 1 vs N, 2 vs N-1, 3 vs N-2, etc.
+  for (let position = 0; position < firstRoundGames; position++) {
+    const homeTeam = sortedTeams[position];
+    const awayIndex = numTeams - 1 - position;
+    const awayTeam = awayIndex > position ? sortedTeams[awayIndex] : null;
 
-  // For 8 team bracket positions: 1v8, 4v5, 3v6, 2v7
-  const standardSeeding8 = [
-    [0, 7], // 1 vs 8
-    [3, 4], // 4 vs 5
-    [2, 5], // 3 vs 6
-    [1, 6], // 2 vs 7
-  ];
-
-  // For 4 team bracket: 1v4, 2v3
-  const standardSeeding4 = [
-    [0, 3], // 1 vs 4
-    [1, 2], // 2 vs 3
-  ];
-
-  // For 2 team bracket: 1v2
-  const standardSeeding2 = [
-    [0, 1], // 1 vs 2
-  ];
-
-  // Use appropriate seeding based on bracket size
-  let seedPattern: number[][];
-  if (halfBracket === 4) {
-    seedPattern = standardSeeding8;
-  } else if (halfBracket === 2) {
-    seedPattern = standardSeeding4;
-  } else if (halfBracket === 1) {
-    seedPattern = standardSeeding2;
-  } else {
-    // Generate pattern for larger brackets
-    seedPattern = [];
-    for (let i = 0; i < halfBracket; i++) {
-      seedPattern.push([i, bracketSize - 1 - i]);
-    }
-  }
-
-  for (let position = 0; position < halfBracket; position++) {
-    const [homeSeed, awaySeed] = seedPattern[position] || [position, bracketSize - 1 - position];
-
-    const homeTeam = teams.find(t => t.seed === homeSeed);
-    const awayTeam = teams.find(t => t.seed === awaySeed);
-
-    // Only create a game if at least one team exists (not a double-bye)
-    if (homeTeam || awayTeam) {
-      matchups.push({
-        homeTeamId: homeTeam?.id || null,
-        awayTeamId: awayTeam?.id || null,
-        position,
-      });
-    }
+    matchups.push({
+      homeTeamId: homeTeam?.id || null,
+      awayTeamId: awayTeam?.id || null,
+      position,
+    });
   }
 
   return matchups;
@@ -420,19 +378,27 @@ export async function POST(request: NextRequest) {
       let courtSlotIdx = 0;
       let totalGames = 0;
 
+      // Calculate games per round
+      // Round 1: firstRoundGames, Round 2: ceil(R1/2), etc.
+      const gamesPerRound: number[] = [];
+      let gamesInRound = structure.firstRoundGames;
+      for (let r = 1; r <= structure.totalRounds; r++) {
+        gamesPerRound[r] = gamesInRound;
+        gamesInRound = Math.ceil(gamesInRound / 2);
+      }
+
       // Create games from first round forward
-      // Round 1 is first round, highest round is finals
       for (let round = 1; round <= structure.totalRounds; round++) {
-        const gamesInRound = Math.pow(2, structure.totalRounds - round);
+        const numGamesInRound = gamesPerRound[round];
         const roundGames: { id: string; position: number }[] = [];
 
-        for (let position = 0; position < gamesInRound; position++) {
+        for (let position = 0; position < numGamesInRound; position++) {
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
 
           if (round === 1) {
             // First round - use generated matchups
-            const matchup = firstRoundMatchups.find(m => m.position === position);
+            const matchup = firstRoundMatchups[position];
             if (matchup) {
               homeTeamId = matchup.homeTeamId;
               awayTeamId = matchup.awayTeamId;
@@ -491,8 +457,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Handle byes - if a first round game has only one team, auto-advance them
-      const firstRoundGames = gamesByRound.get(1) || [];
-      for (const gameRef of firstRoundGames) {
+      const firstRoundGamesRef = gamesByRound.get(1) || [];
+      for (const gameRef of firstRoundGamesRef) {
         const game = await prisma.game.findUnique({
           where: { id: gameRef.id },
           include: { homeTeam: true, awayTeam: true },
@@ -534,7 +500,7 @@ export async function POST(request: NextRequest) {
         totalGames,
         rounds: structure.totalRounds,
         teams: numTeams,
-        byes: structure.byes,
+        hasBye: structure.hasBye,
         divisions: divisions.length,
       });
     }
@@ -586,19 +552,27 @@ export async function POST(request: NextRequest) {
       const firstRoundMatchups = generateFirstRoundMatchups(seededTeams, structure);
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
 
+      // Calculate games per round
+      const gamesPerRound: number[] = [];
+      let gamesInRound = structure.firstRoundGames;
+      for (let r = 1; r <= structure.totalRounds; r++) {
+        gamesPerRound[r] = gamesInRound;
+        gamesInRound = Math.ceil(gamesInRound / 2);
+      }
+
       // Start playoff court slots after pool play
       let courtSlotIdx = scheduledPoolGames.length;
 
       for (let round = 1; round <= structure.totalRounds; round++) {
-        const gamesInRound = Math.pow(2, structure.totalRounds - round);
+        const numGamesInRound = gamesPerRound[round];
         const roundGames: { id: string; position: number }[] = [];
 
-        for (let position = 0; position < gamesInRound; position++) {
+        for (let position = 0; position < numGamesInRound; position++) {
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
 
           if (round === 1) {
-            const matchup = firstRoundMatchups.find(m => m.position === position);
+            const matchup = firstRoundMatchups[position];
             if (matchup) {
               homeTeamId = matchup.homeTeamId;
               awayTeamId = matchup.awayTeamId;

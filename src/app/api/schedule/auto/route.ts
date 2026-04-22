@@ -102,6 +102,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Get all courts - all courts are available at each time slot
+    const allCourts = await prisma.court.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    if (allCourts.length === 0) {
+      return NextResponse.json(
+        { error: 'No courts configured. Please add courts first.' },
+        { status: 400 }
+      );
+    }
+
     // Create games based on the schedule
     const games = [];
     // Parse the date string (YYYY-MM-DD) to avoid timezone issues
@@ -121,7 +133,11 @@ export async function POST(request: NextRequest) {
       if (matchingPlayNight) {
         const roundMatches = rounds[roundIndex];
 
-        for (const [homeTeamId, awayTeamId] of roundMatches) {
+        for (let i = 0; i < roundMatches.length; i++) {
+          const [homeTeamId, awayTeamId] = roundMatches[i];
+          // Assign courts in rotation
+          const court = allCourts[i % allCourts.length];
+
           const game = await prisma.game.create({
             data: {
               seasonId: division.seasonId,
@@ -129,6 +145,7 @@ export async function POST(request: NextRequest) {
               awayTeamId,
               scheduledDate: new Date(currentDate),
               timeSlotId: matchingPlayNight.timeSlotId,
+              courtId: court.id,
             },
           });
           games.push(game);
