@@ -118,29 +118,31 @@ function generateFairRoundRobin(
       continue;
     }
 
-    // Find games where both teams haven't played this slot
     // Prioritize teams that have waited longest
+    // Teams CAN play back-to-back, but only if no other teams have waited longer
     const eligibleGames = remainingMatchups
       .map((matchup, index) => {
         const [home, away] = matchup;
         const homeState = teamState.get(home)!;
         const awayState = teamState.get(away)!;
 
-        // Can't play if either team played in the previous slot
-        const homeCanPlay = homeState.lastPlayedSlotIndex < currentSlotIndex;
-        const awayCanPlay = awayState.lastPlayedSlotIndex < currentSlotIndex;
-
-        if (!homeCanPlay || !awayCanPlay) return null;
-
         // Priority: sum of wait time (higher = waited longer)
+        // Teams that just played (lastPlayedSlotIndex === currentSlotIndex) have wait of 0
         const homeWait = currentSlotIndex - homeState.lastPlayedSlotIndex;
         const awayWait = currentSlotIndex - awayState.lastPlayedSlotIndex;
         const priority = homeWait + awayWait;
 
+        // Check if either team is currently playing in this same slot
+        // (can't play two games at once)
+        const homePlayingNow = homeState.lastPlayedSlotIndex === currentSlotIndex;
+        const awayPlayingNow = awayState.lastPlayedSlotIndex === currentSlotIndex;
+
+        if (homePlayingNow || awayPlayingNow) return null;
+
         return { matchup, index, priority };
       })
       .filter((g): g is NonNullable<typeof g> => g !== null)
-      .sort((a, b) => b.priority - a.priority); // Highest priority first
+      .sort((a, b) => b.priority - a.priority); // Highest priority first (longest wait)
 
     // Schedule as many games as we have courts
     const gamesToSchedule = eligibleGames.slice(0, courtsAtSlot.length);
