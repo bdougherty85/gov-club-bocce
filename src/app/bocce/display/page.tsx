@@ -72,6 +72,19 @@ export default function TVDisplayPage() {
   const [hasPlayoffs, setHasPlayoffs] = useState(false);
   const [isTournamentDay, setIsTournamentDay] = useState(false);
 
+  // Advance to next view (called on click)
+  const advanceView = () => {
+    setCurrentView((prev) => {
+      if (hasPlayoffs) {
+        if (prev === 'schedule') return 'bracket';
+        if (prev === 'bracket') return 'standings';
+        return 'schedule';
+      } else {
+        return prev === 'schedule' ? 'standings' : 'schedule';
+      }
+    });
+  };
+
   // Fetch data
   const fetchData = async () => {
     try {
@@ -87,22 +100,21 @@ export default function TVDisplayPage() {
         settingsRes.json(),
       ]);
 
-      // Filter for today's games or scheduled games
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Get today's date string (YYYY-MM-DD) to match against game dates
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
+      // Filter for today's games - compare date strings to avoid timezone issues
       const filtered = gamesData.filter((game: Game) => {
-        const gameDate = new Date(game.scheduledDate);
-        return gameDate >= today && gameDate < tomorrow && game.status !== 'cancelled';
+        const gameDateStr = game.scheduledDate.split('T')[0];
+        return gameDateStr === todayStr && game.status !== 'cancelled';
       });
 
-      // Get playoff games (filter to today's playoffs if any)
+      // Get playoff games for today
       const todayPlayoffs = gamesData.filter((g: Game) => {
         if (!g.isPlayoff) return false;
-        const gameDate = new Date(g.scheduledDate);
-        return gameDate >= today && gameDate < tomorrow;
+        const gameDateStr = g.scheduledDate.split('T')[0];
+        return gameDateStr === todayStr;
       });
       const allPlayoffs = gamesData.filter((g: Game) => g.isPlayoff);
 
@@ -167,7 +179,10 @@ export default function TVDisplayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary to-primary-dark text-white overflow-hidden">
+    <div
+      className="min-h-screen bg-gradient-to-br from-primary to-primary-dark text-white overflow-hidden cursor-pointer"
+      onClick={advanceView}
+    >
       {/* Header */}
       <header className="bg-black/20 py-4 px-8">
         <div className="flex justify-between items-center">
