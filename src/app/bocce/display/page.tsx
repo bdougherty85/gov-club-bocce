@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Bracket from '@/components/Bracket';
 
 interface Team {
   id: string;
@@ -29,6 +30,11 @@ interface Game {
   status: string;
   court: Court | null;
   timeSlot: TimeSlot | null;
+  isPlayoff?: boolean;
+  playoffRound?: number | null;
+  playoffPosition?: number | null;
+  nextGameId?: string | null;
+  nextGamePosition?: string | null;
 }
 
 interface Standing {
@@ -56,12 +62,14 @@ interface Settings {
 const ROTATION_INTERVAL = 10000; // 10 seconds
 
 export default function TVDisplayPage() {
-  const [currentView, setCurrentView] = useState<'games' | 'standings'>('games');
+  const [currentView, setCurrentView] = useState<'games' | 'standings' | 'bracket'>('games');
   const [todayGames, setTodayGames] = useState<Game[]>([]);
+  const [playoffGames, setPlayoffGames] = useState<Game[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [hasPlayoffs, setHasPlayoffs] = useState(false);
 
   // Fetch data
   const fetchData = async () => {
@@ -89,6 +97,11 @@ export default function TVDisplayPage() {
         return gameDate >= today && gameDate < tomorrow && game.status !== 'cancelled';
       });
 
+      // Get playoff games
+      const playoffs = gamesData.filter((g: Game) => g.isPlayoff);
+      setPlayoffGames(playoffs);
+      setHasPlayoffs(playoffs.length > 0);
+
       setTodayGames(filtered.length > 0 ? filtered : gamesData.filter((g: Game) => g.status === 'scheduled').slice(0, 6));
       setDivisions(divisionsData);
       setSettings(settingsData);
@@ -114,13 +127,23 @@ export default function TVDisplayPage() {
     return () => clearInterval(clockInterval);
   }, []);
 
-  // Auto-rotate views
+  // Auto-rotate views (include bracket if playoffs exist)
   useEffect(() => {
     const rotationInterval = setInterval(() => {
-      setCurrentView((prev) => (prev === 'games' ? 'standings' : 'games'));
+      setCurrentView((prev) => {
+        if (hasPlayoffs) {
+          // Rotate through games -> bracket -> standings -> games
+          if (prev === 'games') return 'bracket';
+          if (prev === 'bracket') return 'standings';
+          return 'games';
+        } else {
+          // No playoffs, just games and standings
+          return prev === 'games' ? 'standings' : 'games';
+        }
+      });
     }, ROTATION_INTERVAL);
     return () => clearInterval(rotationInterval);
-  }, []);
+  }, [hasPlayoffs]);
 
   if (loading) {
     return (
@@ -169,6 +192,8 @@ export default function TVDisplayPage() {
       <main className="p-8 h-[calc(100vh-120px)]">
         {currentView === 'games' ? (
           <GamesView games={todayGames} currentDivisionId={settings?.currentDivisionId} />
+        ) : currentView === 'bracket' ? (
+          <BracketView games={playoffGames} />
         ) : (
           <StandingsView divisions={divisions} currentDivisionId={settings?.currentDivisionId} />
         )}
@@ -181,6 +206,13 @@ export default function TVDisplayPage() {
             currentView === 'games' ? 'bg-secondary scale-125' : 'bg-white/30'
           }`}
         />
+        {hasPlayoffs && (
+          <div
+            className={`w-3 h-3 rounded-full transition-all ${
+              currentView === 'bracket' ? 'bg-secondary scale-125' : 'bg-white/30'
+            }`}
+          />
+        )}
         <div
           className={`w-3 h-3 rounded-full transition-all ${
             currentView === 'standings' ? 'bg-secondary scale-125' : 'bg-white/30'
@@ -288,6 +320,44 @@ function GamesView({ games, currentDivisionId }: { games: Game[]; currentDivisio
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function BracketView({ games }: { games: Game[] }) {
+  if (games.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-4xl font-bold">No Bracket Available</h2>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-auto">
+      <h2 className="text-4xl font-bold mb-6 text-center">Tournament Bracket</h2>
+      <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
+        <Bracket
+          games={games.map(g => ({
+            id: g.id,
+            playoffRound: g.playoffRound || 1,
+            playoffPosition: g.playoffPosition || 0,
+            homeTeam: g.homeTeam,
+            awayTeam: g.awayTeam,
+            homeScore: g.homeScore,
+            awayScore: g.awayScore,
+            status: g.status,
+            nextGameId: g.nextGameId || null,
+            nextGamePosition: g.nextGamePosition || null,
+            court: g.court ? { name: g.court.name } : null,
+            timeSlot: g.timeSlot ? { startTime: g.timeSlot.startTime } : null,
+          }))}
+          compact={false}
+          showControls={false}
+        />
       </div>
     </div>
   );

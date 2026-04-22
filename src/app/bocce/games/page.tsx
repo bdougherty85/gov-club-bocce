@@ -6,6 +6,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Modal from '@/components/ui/Modal';
+import Bracket from '@/components/Bracket';
 import toast from 'react-hot-toast';
 
 interface Team {
@@ -25,6 +26,10 @@ interface Game {
   scoreboardPhoto: string | null;
   notes: string | null;
   isPlayoff: boolean;
+  playoffRound?: number | null;
+  playoffPosition?: number | null;
+  nextGameId?: string | null;
+  nextGamePosition?: string | null;
   court?: { id: string; name: string } | null;
   timeSlot?: { id: string; startTime: string; endTime: string } | null;
 }
@@ -58,6 +63,7 @@ export default function GamesPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [filter, setFilter] = useState('all');
+  const [viewMode, setViewMode] = useState<'list' | 'bracket'>('list');
   const [formData, setFormData] = useState({
     homeScore: '',
     awayScore: '',
@@ -310,6 +316,56 @@ export default function GamesPage() {
     }
   };
 
+  const handleSelectWinner = async (gameId: string, winnerId: string) => {
+    // Find the game
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+
+    // Determine scores - winning team gets 1, losing team gets 0
+    const homeScore = game.homeTeam?.id === winnerId ? 1 : 0;
+    const awayScore = game.awayTeam?.id === winnerId ? 1 : 0;
+
+    try {
+      const res = await fetch(`/api/games/${gameId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          homeScore,
+          awayScore,
+          status: 'completed',
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update game');
+
+      toast.success('Winner selected - advancing to next round');
+      fetchGames();
+    } catch (error) {
+      toast.error('Failed to select winner');
+    }
+  };
+
+  const handleClearWinner = async (gameId: string) => {
+    try {
+      const res = await fetch(`/api/games/${gameId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          homeScore: null,
+          awayScore: null,
+          status: 'scheduled',
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to clear winner');
+
+      toast.success('Winner cleared');
+      fetchGames();
+    } catch (error) {
+      toast.error('Failed to clear winner');
+    }
+  };
+
   const filteredGames = games.filter((game) => {
     if (filter === 'all') return true;
     if (filter === 'scheduled') return game.status === 'scheduled';
@@ -353,20 +409,47 @@ export default function GamesPage() {
 
       {/* Filters */}
       <Card className="mb-6">
-        <div className="flex flex-wrap gap-2">
-          {['all', 'scheduled', 'completed', 'playoff'].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                filter === f
-                  ? 'bg-primary text-white'
-                  : 'bg-gray-100 text-foreground hover:bg-gray-200'
-              }`}
-            >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </button>
-          ))}
+        <div className="flex flex-wrap justify-between items-center gap-4">
+          <div className="flex flex-wrap gap-2">
+            {['all', 'scheduled', 'completed', 'playoff'].map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  filter === f
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-100 text-foreground hover:bg-gray-200'
+                }`}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+              </button>
+            ))}
+          </div>
+          {/* View toggle for playoff games */}
+          {filteredGames.some(g => g.isPlayoff) && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  viewMode === 'list'
+                    ? 'bg-secondary text-white'
+                    : 'bg-gray-100 text-foreground hover:bg-gray-200'
+                }`}
+              >
+                List View
+              </button>
+              <button
+                onClick={() => setViewMode('bracket')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  viewMode === 'bracket'
+                    ? 'bg-secondary text-white'
+                    : 'bg-gray-100 text-foreground hover:bg-gray-200'
+                }`}
+              >
+                Bracket View
+              </button>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -378,13 +461,37 @@ export default function GamesPage() {
             <p className="text-muted">No games found. Create a schedule first!</p>
           </div>
         </Card>
+      ) : viewMode === 'bracket' && filteredGames.some(g => g.isPlayoff) ? (
+        <Card title="Tournament Bracket">
+          <p className="text-sm text-muted mb-4">
+            Click on a team name to select them as the winner. The winner will automatically advance to the next round.
+          </p>
+          <Bracket
+            games={filteredGames.filter(g => g.isPlayoff).map(g => ({
+              id: g.id,
+              playoffRound: g.playoffRound || 1,
+              playoffPosition: g.playoffPosition || 0,
+              homeTeam: g.homeTeam,
+              awayTeam: g.awayTeam,
+              homeScore: g.homeScore,
+              awayScore: g.awayScore,
+              status: g.status,
+              nextGameId: g.nextGameId || null,
+              nextGamePosition: g.nextGamePosition || null,
+              court: g.court,
+              timeSlot: g.timeSlot,
+            }))}
+            onSelectWinner={handleSelectWinner}
+            onClearWinner={handleClearWinner}
+          />
+        </Card>
       ) : (
         <div className="space-y-4">
           {filteredGames.map((game) => (
             <Card key={game.id}>
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
+                  <div className="flex items-center gap-3 mb-2 flex-wrap">
                     <p className="text-sm text-muted">
                       {new Date(game.scheduledDate).toLocaleDateString('en-US', {
                         weekday: 'long',
@@ -393,6 +500,16 @@ export default function GamesPage() {
                         day: 'numeric',
                       })}
                     </p>
+                    {game.timeSlot && (
+                      <span className="text-sm text-foreground font-medium">
+                        {game.timeSlot.startTime}
+                      </span>
+                    )}
+                    {game.court && (
+                      <span className="px-2 py-0.5 bg-secondary/10 text-secondary text-xs font-medium rounded">
+                        {game.court.name}
+                      </span>
+                    )}
                     {getStatusBadge(game.status, game.isPlayoff)}
                   </div>
 
