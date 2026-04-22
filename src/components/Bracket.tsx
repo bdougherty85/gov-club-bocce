@@ -1,7 +1,5 @@
 'use client';
 
-import { useState } from 'react';
-
 interface Team {
   id: string;
   name: string;
@@ -31,8 +29,6 @@ interface BracketProps {
 }
 
 export default function Bracket({ games, onSelectWinner, onClearWinner, compact = false, showControls = true }: BracketProps) {
-  const [selectedGame, setSelectedGame] = useState<string | null>(null);
-
   if (games.length === 0) {
     return (
       <div className="text-center py-8 text-muted">
@@ -56,6 +52,7 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
 
   const rounds = Object.keys(gamesByRound).map(Number).sort((a, b) => a - b);
   const maxRound = Math.max(...rounds);
+  const totalRounds = maxRound;
 
   const getRoundName = (round: number) => {
     const diff = maxRound - round;
@@ -69,7 +66,7 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
     if (game.homeScore === null || game.awayScore === null) return null;
     if (game.homeScore > game.awayScore) return game.homeTeam;
     if (game.awayScore > game.homeScore) return game.awayTeam;
-    return null; // Tie - shouldn't happen in elimination
+    return null;
   };
 
   const handleTeamClick = (game: BracketGame, team: Team | null) => {
@@ -77,159 +74,254 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
 
     const winner = getWinner(game);
 
-    // If clicking the current winner, clear it
     if (winner?.id === team.id && onClearWinner) {
       onClearWinner(game.id);
     } else {
-      // Select this team as winner
       onSelectWinner(game.id, team.id);
     }
   };
 
-  return (
-    <div className="overflow-x-auto pb-4">
-      <div className="flex gap-4 min-w-max">
-        {rounds.map((round) => {
-          const roundGames = gamesByRound[round] || [];
-          // Calculate spacing - later rounds have fewer games, need more vertical spacing
-          const gamesInRound = roundGames.length;
-          const spacingMultiplier = Math.pow(2, round - 1);
+  // Calculate dimensions
+  const matchupHeight = compact ? 56 : 72;
+  const matchupWidth = compact ? 140 : 180;
+  const horizontalGap = compact ? 40 : 60;
+  const connectorWidth = horizontalGap;
 
-          return (
-            <div key={round} className="flex-shrink-0" style={{ minWidth: compact ? '200px' : '280px' }}>
-              <h3 className={`font-semibold text-foreground mb-3 text-center ${compact ? 'text-sm' : 'text-lg'}`}>
-                {getRoundName(round)}
-              </h3>
+  // Calculate the total height needed
+  const firstRoundGames = gamesByRound[1]?.length || 0;
+  const totalHeight = firstRoundGames * matchupHeight * 2;
+
+  return (
+    <div className="overflow-x-auto overflow-y-auto pb-4">
+      <div className="relative" style={{
+        minWidth: `${(totalRounds + 1) * (matchupWidth + connectorWidth) + matchupWidth}px`,
+        minHeight: `${totalHeight + 40}px`
+      }}>
+        {/* Round headers */}
+        <div className="flex mb-4" style={{ gap: `${connectorWidth}px` }}>
+          {rounds.map((round) => (
+            <div
+              key={`header-${round}`}
+              className={`text-center font-semibold text-foreground ${compact ? 'text-sm' : 'text-base'}`}
+              style={{ width: `${matchupWidth}px` }}
+            >
+              {getRoundName(round)}
+            </div>
+          ))}
+          <div
+            className={`text-center font-semibold text-foreground ${compact ? 'text-sm' : 'text-base'}`}
+            style={{ width: `${matchupWidth}px` }}
+          >
+            Champion
+          </div>
+        </div>
+
+        {/* Bracket SVG for connectors */}
+        <svg
+          className="absolute top-8 left-0 pointer-events-none"
+          style={{
+            width: `${(totalRounds + 1) * (matchupWidth + connectorWidth) + matchupWidth}px`,
+            height: `${totalHeight}px`
+          }}
+        >
+          {rounds.slice(0, -1).map((round) => {
+            const roundGames = gamesByRound[round] || [];
+            const nextRoundGames = gamesByRound[round + 1] || [];
+            const gamesInRound = roundGames.length;
+
+            // Calculate vertical spacing for this round
+            const spacingMultiplier = Math.pow(2, round - 1);
+            const baseSpacing = matchupHeight * 2;
+            const roundSpacing = baseSpacing * spacingMultiplier;
+            const roundStartY = (roundSpacing - matchupHeight) / 2;
+
+            // Calculate x positions
+            const roundX = (round - 1) * (matchupWidth + connectorWidth);
+            const nextRoundX = round * (matchupWidth + connectorWidth);
+
+            return roundGames.map((game, idx) => {
+              const y1 = roundStartY + idx * roundSpacing + matchupHeight / 2;
+
+              // Find the partner game (the other game feeding into the same next round game)
+              const partnerIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+              const partnerGame = roundGames[partnerIdx];
+
+              if (!partnerGame || idx % 2 !== 0) return null;
+
+              const y2 = roundStartY + partnerIdx * roundSpacing + matchupHeight / 2;
+              const midY = (y1 + y2) / 2;
+
+              // Connection path: right from game, down/up to midpoint, right to next game
+              const startX = roundX + matchupWidth;
+              const endX = nextRoundX;
+              const midX = startX + connectorWidth / 2;
+
+              return (
+                <g key={`connector-${round}-${idx}`}>
+                  {/* Line from top game to middle */}
+                  <path
+                    d={`M ${startX} ${y1} H ${midX} V ${midY}`}
+                    fill="none"
+                    stroke="#d1d5db"
+                    strokeWidth="2"
+                  />
+                  {/* Line from bottom game to middle */}
+                  <path
+                    d={`M ${startX} ${y2} H ${midX} V ${midY}`}
+                    fill="none"
+                    stroke="#d1d5db"
+                    strokeWidth="2"
+                  />
+                  {/* Line from middle to next round */}
+                  <path
+                    d={`M ${midX} ${midY} H ${endX}`}
+                    fill="none"
+                    stroke="#d1d5db"
+                    strokeWidth="2"
+                  />
+                </g>
+              );
+            });
+          })}
+
+          {/* Final connector to champion */}
+          {gamesByRound[maxRound]?.[0] && (() => {
+            const finalsGame = gamesByRound[maxRound][0];
+            const finalsX = (maxRound - 1) * (matchupWidth + connectorWidth);
+
+            // Calculate finals Y position
+            const spacingMultiplier = Math.pow(2, maxRound - 1);
+            const baseSpacing = matchupHeight * 2;
+            const roundSpacing = baseSpacing * spacingMultiplier;
+            const finalsY = (roundSpacing - matchupHeight) / 2 + matchupHeight / 2;
+
+            const startX = finalsX + matchupWidth;
+            const endX = maxRound * (matchupWidth + connectorWidth);
+
+            return (
+              <path
+                d={`M ${startX} ${finalsY} H ${endX}`}
+                fill="none"
+                stroke="#d1d5db"
+                strokeWidth="2"
+              />
+            );
+          })()}
+        </svg>
+
+        {/* Games */}
+        <div className="relative" style={{ height: `${totalHeight}px` }}>
+          {rounds.map((round) => {
+            const roundGames = gamesByRound[round] || [];
+
+            // Calculate vertical spacing for this round
+            const spacingMultiplier = Math.pow(2, round - 1);
+            const baseSpacing = matchupHeight * 2;
+            const roundSpacing = baseSpacing * spacingMultiplier;
+            const roundStartY = (roundSpacing - matchupHeight) / 2;
+
+            const roundX = (round - 1) * (matchupWidth + connectorWidth);
+
+            return roundGames.map((game, idx) => {
+              const y = roundStartY + idx * roundSpacing;
+              const winner = getWinner(game);
+
+              return (
+                <div
+                  key={game.id}
+                  className="absolute"
+                  style={{
+                    left: `${roundX}px`,
+                    top: `${y}px`,
+                    width: `${matchupWidth}px`,
+                    height: `${matchupHeight}px`,
+                  }}
+                >
+                  <div className="h-full bg-white border border-gray-300 rounded shadow-sm overflow-hidden flex flex-col">
+                    {/* Home team */}
+                    <div
+                      className={`flex-1 flex justify-between items-center border-b border-gray-200 cursor-pointer transition-colors ${
+                        compact ? 'px-2 text-xs' : 'px-3 text-sm'
+                      } ${
+                        winner?.id === game.homeTeam?.id
+                          ? 'bg-green-100 font-semibold'
+                          : winner && game.homeTeam ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => handleTeamClick(game, game.homeTeam)}
+                    >
+                      <span className="truncate flex-1">
+                        {game.homeTeam?.name || 'TBD'}
+                      </span>
+                      <span className={`font-bold ml-1 ${compact ? 'text-xs' : 'text-sm'}`}>
+                        {game.homeScore ?? ''}
+                      </span>
+                    </div>
+
+                    {/* Away team */}
+                    <div
+                      className={`flex-1 flex justify-between items-center cursor-pointer transition-colors ${
+                        compact ? 'px-2 text-xs' : 'px-3 text-sm'
+                      } ${
+                        winner?.id === game.awayTeam?.id
+                          ? 'bg-green-100 font-semibold'
+                          : winner && game.awayTeam ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => handleTeamClick(game, game.awayTeam)}
+                    >
+                      <span className="truncate flex-1">
+                        {game.awayTeam?.name || 'TBD'}
+                      </span>
+                      <span className={`font-bold ml-1 ${compact ? 'text-xs' : 'text-sm'}`}>
+                        {game.awayScore ?? ''}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            });
+          })}
+
+          {/* Champion box */}
+          {(() => {
+            const finalsGame = gamesByRound[maxRound]?.[0];
+            const champion = finalsGame ? getWinner(finalsGame) : null;
+
+            const spacingMultiplier = Math.pow(2, maxRound - 1);
+            const baseSpacing = matchupHeight * 2;
+            const roundSpacing = baseSpacing * spacingMultiplier;
+            const championY = (roundSpacing - matchupHeight) / 2;
+            const championX = maxRound * (matchupWidth + connectorWidth);
+
+            return (
               <div
-                className="flex flex-col justify-around"
+                className="absolute"
                 style={{
-                  gap: `${spacingMultiplier * (compact ? 8 : 16)}px`,
-                  minHeight: `${gamesInRound * (compact ? 80 : 120) + (gamesInRound - 1) * spacingMultiplier * (compact ? 8 : 16)}px`
+                  left: `${championX}px`,
+                  top: `${championY}px`,
+                  width: `${matchupWidth}px`,
+                  height: `${matchupHeight}px`,
                 }}
               >
-                {roundGames.map((game) => {
-                  const winner = getWinner(game);
-                  const isSelected = selectedGame === game.id;
-
-                  return (
-                    <div
-                      key={game.id}
-                      className={`bg-white border rounded-lg shadow-sm overflow-hidden ${
-                        isSelected ? 'ring-2 ring-primary' : ''
-                      }`}
-                      onClick={() => showControls && setSelectedGame(isSelected ? null : game.id)}
-                    >
-                      {/* Game info header */}
-                      {(game.court || game.timeSlot) && (
-                        <div className={`bg-gray-50 border-b flex justify-between items-center ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}>
-                          <span className="font-medium text-foreground">
-                            {game.court?.name || 'TBD'}
-                          </span>
-                          {game.timeSlot && (
-                            <span className="text-muted">
-                              {game.timeSlot.startTime}
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Home team */}
-                      <div
-                        className={`flex justify-between items-center border-b cursor-pointer transition-colors ${
-                          compact ? 'px-2 py-1.5' : 'px-3 py-2'
-                        } ${
-                          winner?.id === game.homeTeam?.id
-                            ? 'bg-green-50'
-                            : winner && game.homeTeam ? 'bg-gray-50 text-muted' : 'hover:bg-gray-50'
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleTeamClick(game, game.homeTeam);
-                        }}
-                      >
-                        <span className={`font-medium truncate ${compact ? 'text-sm' : ''} ${
-                          winner?.id === game.homeTeam?.id ? 'text-green-700 font-semibold' : 'text-foreground'
-                        }`}>
-                          {game.homeTeam?.name || 'TBD'}
-                        </span>
-                        <span className={`font-bold ml-2 ${compact ? 'text-sm' : 'text-lg'}`}>
-                          {game.homeScore ?? '-'}
-                        </span>
-                      </div>
-
-                      {/* Away team */}
-                      <div
-                        className={`flex justify-between items-center cursor-pointer transition-colors ${
-                          compact ? 'px-2 py-1.5' : 'px-3 py-2'
-                        } ${
-                          winner?.id === game.awayTeam?.id
-                            ? 'bg-green-50'
-                            : winner && game.awayTeam ? 'bg-gray-50 text-muted' : 'hover:bg-gray-50'
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleTeamClick(game, game.awayTeam);
-                        }}
-                      >
-                        <span className={`font-medium truncate ${compact ? 'text-sm' : ''} ${
-                          winner?.id === game.awayTeam?.id ? 'text-green-700 font-semibold' : 'text-foreground'
-                        }`}>
-                          {game.awayTeam?.name || 'TBD'}
-                        </span>
-                        <span className={`font-bold ml-2 ${compact ? 'text-sm' : 'text-lg'}`}>
-                          {game.awayScore ?? '-'}
-                        </span>
-                      </div>
-
-                      {/* Status indicator */}
-                      {game.status === 'completed' && winner && (
-                        <div className={`bg-green-500 text-white text-center font-medium ${compact ? 'text-xs py-0.5' : 'text-sm py-1'}`}>
-                          {winner.name} Wins
-                        </div>
-                      )}
-                      {game.status === 'in_progress' && (
-                        <div className={`bg-yellow-500 text-black text-center font-medium animate-pulse ${compact ? 'text-xs py-0.5' : 'text-sm py-1'}`}>
-                          In Progress
-                        </div>
-                      )}
+                <div className={`h-full flex items-center justify-center rounded shadow-sm ${
+                  champion
+                    ? 'bg-gradient-to-r from-yellow-400 to-yellow-500 text-white font-bold'
+                    : 'bg-gray-100 border border-gray-300 text-gray-400'
+                }`}>
+                  <div className="text-center px-2">
+                    <div className={compact ? 'text-sm' : 'text-base'}>
+                      {champion?.name || 'TBD'}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Champion display */}
-        {maxRound > 0 && (
-          <div className="flex-shrink-0 flex items-center" style={{ minWidth: compact ? '150px' : '200px' }}>
-            <div className="w-full">
-              <h3 className={`font-semibold text-foreground mb-3 text-center ${compact ? 'text-sm' : 'text-lg'}`}>
-                Champion
-              </h3>
-              <div className={`bg-gradient-to-br from-yellow-400 to-yellow-600 rounded-lg shadow-lg text-center ${compact ? 'p-3' : 'p-6'}`}>
-                {(() => {
-                  const finalsGame = gamesByRound[maxRound]?.[0];
-                  const champion = finalsGame ? getWinner(finalsGame) : null;
-                  return champion ? (
-                    <>
-                      <div className={`text-white font-bold ${compact ? 'text-lg' : 'text-2xl'}`}>
-                        {champion.name}
+                    {champion && (
+                      <div className={`text-yellow-100 ${compact ? 'text-xs' : 'text-xs'}`}>
+                        Champion
                       </div>
-                      <div className={`text-yellow-100 ${compact ? 'text-xs' : 'text-sm'}`}>
-                        Tournament Champion
-                      </div>
-                    </>
-                  ) : (
-                    <div className={`text-yellow-100 ${compact ? 'text-sm' : ''}`}>
-                      TBD
-                    </div>
-                  );
-                })()}
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            );
+          })()}
+        </div>
       </div>
     </div>
   );
