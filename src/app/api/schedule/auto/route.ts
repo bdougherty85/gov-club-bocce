@@ -104,7 +104,10 @@ export async function POST(request: NextRequest) {
 
     // Create games based on the schedule
     const games = [];
-    let currentDate = new Date(startDate);
+    // Parse the date string (YYYY-MM-DD) to avoid timezone issues
+    // Using noon local time prevents date shifting across timezones
+    const [year, month, day] = startDate.split('-').map(Number);
+    let currentDate = new Date(year, month - 1, day, 12, 0, 0);
     let roundIndex = 0;
 
     while (roundIndex < rounds.length) {

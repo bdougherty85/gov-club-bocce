@@ -82,7 +82,13 @@ function calculateRounds(numTeams: number): number {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { seasonId, divisionIds } = body;
+    const {
+      seasonId,
+      divisionIds,
+      playoffDate,           // Optional: specific date for playoffs
+      minutesBetweenRounds,  // Optional: for same-day tournaments (default: weekly spacing)
+      startTime,             // Optional: starting time for same-day (e.g., "14:00")
+    } = body;
 
     if (!seasonId || !divisionIds || divisionIds.length === 0) {
       return NextResponse.json(
@@ -90,6 +96,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Determine if this is a same-day tournament
+    const isSameDayTournament = !!minutesBetweenRounds && minutesBetweenRounds < 1440;
 
     // Delete existing playoff games for this season
     await prisma.game.deleteMany({
@@ -131,9 +140,26 @@ export async function POST(request: NextRequest) {
     const numTeams = seededTeams.length;
     const numRounds = calculateRounds(numTeams);
 
-    // Get the season to determine playoff start date
+    // Determine playoff start date
     const season = await prisma.season.findUnique({ where: { id: seasonId } });
-    const playoffStartDate = season?.endDate || new Date();
+    let playoffStartDate: Date;
+
+    if (playoffDate) {
+      // Parse provided date (avoid timezone issues)
+      const [year, month, day] = playoffDate.split('-').map(Number);
+      playoffStartDate = new Date(year, month - 1, day, 12, 0, 0);
+    } else {
+      playoffStartDate = season?.endDate || new Date();
+    }
+
+    // Parse starting time for same-day tournaments
+    let baseHour = 12;
+    let baseMinute = 0;
+    if (startTime && isSameDayTournament) {
+      const [hour, minute] = startTime.split(':').map(Number);
+      baseHour = hour;
+      baseMinute = minute;
+    }
 
     // For single elimination, create all games for all rounds
     // Start from the finals and work backwards so we can link games properly
@@ -172,9 +198,18 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Calculate scheduled date (space rounds out by days)
+        // Calculate scheduled date
         const gameDate = new Date(playoffStartDate);
-        gameDate.setDate(gameDate.getDate() + (round - 1) * 7); // One week between rounds
+
+        if (isSameDayTournament) {
+          // Same-day tournament: space rounds by minutes
+          const roundOffset = (round - 1) * (minutesBetweenRounds || 60);
+          gameDate.setHours(baseHour, baseMinute + roundOffset, 0, 0);
+        } else {
+          // Regular playoffs: space rounds by weeks
+          gameDate.setHours(12, 0, 0, 0);
+          gameDate.setDate(gameDate.getDate() + (round - 1) * 7);
+        }
 
         const game = await prisma.game.create({
           data: {

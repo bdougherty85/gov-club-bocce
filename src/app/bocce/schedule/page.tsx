@@ -57,6 +57,15 @@ export default function SchedulePage() {
     startDate: '',
     doubleRoundRobin: false,
   });
+  const [tournamentModalOpen, setTournamentModalOpen] = useState(false);
+  const [tournamentData, setTournamentData] = useState({
+    divisionId: '',
+    tournamentDate: '',
+    timeSlotIds: [] as string[],
+    includePlayoffs: true,
+    teamsInPlayoffs: 4,
+    minutesBetweenRounds: 60,
+  });
 
   const fetchData = async () => {
     try {
@@ -195,6 +204,51 @@ export default function SchedulePage() {
     }
   };
 
+  const handleTournamentSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (tournamentData.timeSlotIds.length === 0) {
+      toast.error('Please select at least one time slot');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/schedule/tournament', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tournamentData),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to create tournament');
+      }
+
+      const result = await res.json();
+      toast.success(result.message);
+      setTournamentModalOpen(false);
+      setTournamentData({
+        divisionId: '',
+        tournamentDate: '',
+        timeSlotIds: [],
+        includePlayoffs: true,
+        teamsInPlayoffs: 4,
+        minutesBetweenRounds: 60,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create tournament');
+    }
+  };
+
+  const toggleTournamentTimeSlot = (slotId: string) => {
+    setTournamentData((prev) => ({
+      ...prev,
+      timeSlotIds: prev.timeSlotIds.includes(slotId)
+        ? prev.timeSlotIds.filter((id) => id !== slotId)
+        : [...prev.timeSlotIds, slotId],
+    }));
+  };
+
   const handleDeleteTimeSlot = async (id: string) => {
     if (!confirm('Delete this time slot?')) return;
 
@@ -245,8 +299,11 @@ export default function SchedulePage() {
           <Button variant="outline" onClick={() => setTimeSlotModalOpen(true)}>
             Add Time Slot
           </Button>
-          <Button onClick={() => setAutoScheduleModalOpen(true)}>
+          <Button variant="outline" onClick={() => setAutoScheduleModalOpen(true)}>
             Auto-Schedule
+          </Button>
+          <Button onClick={() => setTournamentModalOpen(true)}>
+            One-Day Tournament
           </Button>
         </div>
       </div>
@@ -461,6 +518,133 @@ export default function SchedulePage() {
               Cancel
             </Button>
             <Button type="submit">Generate Schedule</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* One-Day Tournament Modal */}
+      <Modal
+        isOpen={tournamentModalOpen}
+        onClose={() => setTournamentModalOpen(false)}
+        title="Create One-Day Tournament"
+        size="lg"
+      >
+        <form onSubmit={handleTournamentSchedule} className="space-y-4">
+          <p className="text-sm text-muted">
+            Create a complete tournament for a single day with pool play games and optional
+            playoff bracket. All games will be scheduled on the same date.
+          </p>
+
+          <Select
+            label="Division"
+            value={tournamentData.divisionId}
+            onChange={(e) => setTournamentData({ ...tournamentData, divisionId: e.target.value })}
+            options={[
+              { value: '', label: 'Select a division...' },
+              ...divisions.map((d) => ({
+                value: d.id,
+                label: `${d.name} (${d.teams.length} teams)`,
+              })),
+            ]}
+            required
+          />
+
+          <Input
+            label="Tournament Date"
+            type="date"
+            value={tournamentData.tournamentDate}
+            onChange={(e) => setTournamentData({ ...tournamentData, tournamentDate: e.target.value })}
+            required
+          />
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              Select Time Slots (for pool play games)
+            </label>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {timeSlots.length === 0 ? (
+                <p className="text-sm text-muted">
+                  No time slots configured. Add time slots first.
+                </p>
+              ) : (
+                timeSlots.map((slot) => (
+                  <label
+                    key={slot.id}
+                    className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tournamentData.timeSlotIds.includes(slot.id)}
+                      onChange={() => toggleTournamentTimeSlot(slot.id)}
+                      className="rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span className="text-foreground">
+                      {dayNames[slot.dayOfWeek]} {slot.startTime} - {slot.endTime}
+                      {slot.court && <span className="text-muted ml-2">({slot.court.name})</span>}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <label className="flex items-center space-x-2 mb-4">
+              <input
+                type="checkbox"
+                checked={tournamentData.includePlayoffs}
+                onChange={(e) =>
+                  setTournamentData({ ...tournamentData, includePlayoffs: e.target.checked })
+                }
+                className="rounded border-border text-primary focus:ring-primary"
+              />
+              <span className="text-sm font-medium text-foreground">
+                Include playoff bracket on same day
+              </span>
+            </label>
+
+            {tournamentData.includePlayoffs && (
+              <div className="space-y-4 pl-6">
+                <Select
+                  label="Teams in Playoffs"
+                  value={tournamentData.teamsInPlayoffs.toString()}
+                  onChange={(e) =>
+                    setTournamentData({
+                      ...tournamentData,
+                      teamsInPlayoffs: parseInt(e.target.value),
+                    })
+                  }
+                  options={[
+                    { value: '2', label: '2 teams (Finals only)' },
+                    { value: '4', label: '4 teams (Semi-finals + Finals)' },
+                    { value: '8', label: '8 teams (Quarter-finals through Finals)' },
+                  ]}
+                />
+
+                <Input
+                  label="Minutes Between Rounds"
+                  type="number"
+                  min="15"
+                  max="180"
+                  value={tournamentData.minutesBetweenRounds.toString()}
+                  onChange={(e) =>
+                    setTournamentData({
+                      ...tournamentData,
+                      minutesBetweenRounds: parseInt(e.target.value) || 60,
+                    })
+                  }
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button type="button" variant="outline" onClick={() => setTournamentModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={timeSlots.length === 0}>
+              Create Tournament
+            </Button>
           </div>
         </form>
       </Modal>
