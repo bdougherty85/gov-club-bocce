@@ -107,24 +107,42 @@ export async function POST(request: NextRequest) {
     ]);
     console.log(`Deleted ${deletedByDate.count} games by date, ${deletedPlayoffs.count} playoff games`);
 
-    // Simple court assignment:
-    // - Fill all courts in time slot 1, then all courts in time slot 2, etc.
-    // - With 4 courts and 3 time slots: games 1-4 get TS1, games 5-8 get TS2, games 9-12 get TS3
+    // Court assignment per round:
+    // - Each round starts at the NEXT time slot after the previous round
+    // - Within a round, fill all courts before moving to next time slot
+    // - Example: 4 courts, Round 1 has 2 games → uses TS1 (courts 1-2)
+    //            Round 2 has 1 game → uses TS2 (court 1), NOT TS1
     const numCourts = allCourts.length;
-    let gameNumber = 0;
 
-    const getNextCourt = () => {
-      // Which time slot? Every N games (where N = numCourts) we move to next time slot
-      const timeSlotIndex = Math.floor(gameNumber / numCourts) % timeSlots.length;
-      // Which court within that time slot?
-      const courtIndex = gameNumber % numCourts;
+    // Track court position within each round
+    let currentRound = 0;
+    let roundStartTimeSlot = 0;
+    let gamesInCurrentRound = 0;
+
+    const startNewRound = (round: number, gamesThisRound: number) => {
+      // Move to next time slot after previous round
+      if (round > 1 && gamesInCurrentRound > 0) {
+        const timeSlotsUsedByPrevRound = Math.ceil(gamesInCurrentRound / numCourts);
+        roundStartTimeSlot += timeSlotsUsedByPrevRound;
+      }
+      currentRound = round;
+      gamesInCurrentRound = 0;
+      console.log(`Round ${round}: starting at time slot ${roundStartTimeSlot}, ${gamesThisRound} games`);
+    };
+
+    const getCourtForRound = () => {
+      // Time slot = round start + offset based on games in this round
+      const timeSlotOffset = Math.floor(gamesInCurrentRound / numCourts);
+      const timeSlotIndex = (roundStartTimeSlot + timeSlotOffset) % timeSlots.length;
+      // Court cycles within each time slot
+      const courtIndex = gamesInCurrentRound % numCourts;
 
       const timeSlot = timeSlots[timeSlotIndex];
       const court = allCourts[courtIndex];
 
-      console.log(`Game ${gameNumber}: TimeSlot ${timeSlotIndex} (${timeSlot.startTime}), Court ${courtIndex} (${court.name})`);
+      console.log(`  Game ${gamesInCurrentRound} in round ${currentRound}: TS${timeSlotIndex} (${timeSlot.startTime}), ${court.name}`);
 
-      gameNumber++;
+      gamesInCurrentRound++;
       return {
         timeSlotId: timeSlot.id,
         courtId: court.id,
@@ -203,6 +221,9 @@ export async function POST(request: NextRequest) {
         const numGamesThisRound = gamesPerRound[round];
         const roundGames: { id: string; position: number }[] = [];
 
+        // Start new round - moves to next time slot after previous round
+        startNewRound(round, numGamesThisRound);
+
         for (let position = 0; position < numGamesThisRound; position++) {
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
@@ -217,8 +238,8 @@ export async function POST(request: NextRequest) {
           }
           // Later rounds: teams TBD (null) until previous round completes
 
-          // Get court assignment - EVERY game gets a court (including later rounds)
-          const courtAssignment = getNextCourt();
+          // Get court assignment for this round
+          const courtAssignment = getCourtForRound();
 
           if (!courtAssignment.courtId || !courtAssignment.timeSlotId) {
             console.error(`ERROR: Invalid court assignment for round ${round}, pos ${position}`);
@@ -321,10 +342,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Simple court assignment for pool play: fill courts, then next time slot
+    let poolGameIndex = 0;
+    const getPoolCourt = () => {
+      const timeSlotIndex = Math.floor(poolGameIndex / numCourts) % timeSlots.length;
+      const courtIndex = poolGameIndex % numCourts;
+      poolGameIndex++;
+      return {
+        timeSlotId: timeSlots[timeSlotIndex].id,
+        courtId: allCourts[courtIndex].id,
+      };
+    };
+
     // Create pool play games
     const createdPoolGames = [];
     for (const pg of poolGames) {
-      const courtAssignment = getNextCourt();
+      const courtAssignment = getPoolCourt();
 
       const game = await prisma.game.create({
         data: {
