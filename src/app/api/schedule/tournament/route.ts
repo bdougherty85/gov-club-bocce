@@ -97,29 +97,31 @@ export async function POST(request: NextRequest) {
     });
     console.log(`Deleted ${deletedGames.count} existing games for ${tournamentDate}`);
 
-    // Build court assignments: cycle through time slots, and for each time slot all courts are available
-    const courtAssignments: { timeSlotId: string; courtId: string }[] = [];
-    for (const timeSlot of timeSlots) {
-      for (const court of allCourts) {
-        courtAssignments.push({
-          timeSlotId: timeSlot.id,
-          courtId: court.id,
-        });
-      }
-    }
+    // Simple court assignment:
+    // - Fill all courts in time slot 1, then all courts in time slot 2, etc.
+    // - With 4 courts and 3 time slots: games 1-4 get TS1, games 5-8 get TS2, games 9-12 get TS3
+    const numCourts = allCourts.length;
+    let gameNumber = 0;
 
-    console.log('Court assignments created:', courtAssignments.length, 'slots');
-    console.log('Time slots:', timeSlots.length, 'Courts:', allCourts.length);
-
-    let courtIndex = 0;
     const getNextCourt = () => {
-      if (courtAssignments.length === 0) {
-        throw new Error('No court assignments available');
-      }
-      const assignment = courtAssignments[courtIndex % courtAssignments.length];
-      courtIndex++;
-      return assignment;
+      // Which time slot? Every N games (where N = numCourts) we move to next time slot
+      const timeSlotIndex = Math.floor(gameNumber / numCourts) % timeSlots.length;
+      // Which court within that time slot?
+      const courtIndex = gameNumber % numCourts;
+
+      const timeSlot = timeSlots[timeSlotIndex];
+      const court = allCourts[courtIndex];
+
+      console.log(`Game ${gameNumber}: TimeSlot ${timeSlotIndex} (${timeSlot.startTime}), Court ${courtIndex} (${court.name})`);
+
+      gameNumber++;
+      return {
+        timeSlotId: timeSlot.id,
+        courtId: court.id,
+      };
     };
+
+    console.log('Courts:', numCourts, 'Time slots:', timeSlots.length);
 
     // SINGLE ELIMINATION BRACKET
     if (format === 'single_elimination') {
