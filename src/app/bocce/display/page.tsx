@@ -276,15 +276,28 @@ function ScheduleView({ games }: { games: Game[] }) {
     );
   }
 
-  // Group games by time slot
+  // Group games by time slot and sort by time
   const gamesByTime = games.reduce((acc, game) => {
-    const time = game.timeSlot?.startTime || 'TBD';
+    const time = game.timeSlot?.startTime || 'ZZZ'; // ZZZ sorts TBD to end
     if (!acc[time]) acc[time] = [];
     acc[time].push(game);
     return acc;
   }, {} as Record<string, Game[]>);
 
-  const timeSlots = Object.keys(gamesByTime).sort();
+  // Sort time slots properly (handle "9:00" vs "13:00")
+  const timeSlots = Object.keys(gamesByTime).sort((a, b) => {
+    if (a === 'ZZZ') return 1;
+    if (b === 'ZZZ') return -1;
+    // Parse time strings and compare
+    const [aH, aM] = a.split(':').map(Number);
+    const [bH, bM] = b.split(':').map(Number);
+    return (aH * 60 + aM) - (bH * 60 + bM);
+  });
+
+  // Sort games within each time slot by court name
+  Object.values(gamesByTime).forEach(gamesInSlot => {
+    gamesInSlot.sort((a, b) => (a.court?.name || '').localeCompare(b.court?.name || ''));
+  });
 
   return (
     <div className="h-full overflow-auto">
@@ -294,7 +307,7 @@ function ScheduleView({ games }: { games: Game[] }) {
       <div className="space-y-6">
         {timeSlots.map((time) => (
           <div key={time} className="bg-white/10 backdrop-blur rounded-2xl p-6">
-            <h3 className="text-2xl font-bold text-secondary mb-4">{time}</h3>
+            <h3 className="text-2xl font-bold text-secondary mb-4">{time === 'ZZZ' ? 'TBD' : time}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {gamesByTime[time].map((game) => (
                 <div
