@@ -207,8 +207,12 @@ export async function POST(request: NextRequest) {
           }
           // Later rounds: teams TBD (null) until previous round completes
 
-          // Get court assignment - EVERY game gets a court
+          // Get court assignment - EVERY game gets a court (including later rounds)
           const courtAssignment = getNextCourt();
+
+          if (!courtAssignment.courtId || !courtAssignment.timeSlotId) {
+            console.error(`ERROR: Invalid court assignment for round ${round}, pos ${position}`);
+          }
 
           const game = await prisma.game.create({
             data: {
@@ -225,7 +229,8 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log(`Created game: round ${round}, pos ${position}, home: ${homeTeamId}, away: ${awayTeamId}, court: ${courtAssignment.courtId}`);
+          // Verify court was saved
+          console.log(`Round ${round} Game ${position}: courtId=${courtAssignment.courtId}, saved=${game.courtId}`);
 
           roundGames.push({ id: game.id, position });
           totalGames++;
