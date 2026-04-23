@@ -81,8 +81,8 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
     }
   };
 
-  // Calculate dimensions
-  const matchupHeight = compact ? 56 : 72;
+  // Calculate dimensions (extra height for court/time header)
+  const matchupHeight = compact ? 70 : 88;
   const matchupWidth = compact ? 140 : 180;
   const horizontalGap = compact ? 40 : 60;
   const connectorWidth = horizontalGap;
@@ -238,6 +238,12 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
                   }}
                 >
                   <div className="h-full bg-white border border-gray-300 rounded shadow-sm overflow-hidden flex flex-col">
+                    {/* Court & Time header */}
+                    <div className={`flex justify-between items-center bg-gray-100 border-b border-gray-200 ${compact ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} text-gray-500`}>
+                      <span className="font-medium">{game.court?.name || 'No Court'}</span>
+                      <span>{game.timeSlot?.startTime || ''}</span>
+                    </div>
+
                     {/* Home team */}
                     <div
                       className={`flex-1 flex justify-between items-center border-b border-gray-200 cursor-pointer transition-colors ${
