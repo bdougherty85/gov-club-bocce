@@ -84,18 +84,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // DELETE ALL existing games for this date and season BEFORE creating new ones
-    // This includes both pool play (isPlayoff: false) and bracket games (isPlayoff: true)
-    const deletedGames = await prisma.game.deleteMany({
-      where: {
-        seasonId,
-        scheduledDate: {
-          gte: startOfDay,
-          lte: endOfDay,
+    // DELETE existing games for this date/season AND all playoff games for this season
+    // This ensures we don't have stale bracket games from previous generations
+    const [deletedByDate, deletedPlayoffs] = await Promise.all([
+      // Delete all games on this date
+      prisma.game.deleteMany({
+        where: {
+          seasonId,
+          scheduledDate: {
+            gte: startOfDay,
+            lte: endOfDay,
+          },
         },
-      },
-    });
-    console.log(`Deleted ${deletedGames.count} existing games for ${tournamentDate}`);
+      }),
+      // Also delete any playoff games for this season (catches stragglers)
+      prisma.game.deleteMany({
+        where: {
+          seasonId,
+          isPlayoff: true,
+        },
+      }),
+    ]);
+    console.log(`Deleted ${deletedByDate.count} games by date, ${deletedPlayoffs.count} playoff games`);
 
     // Simple court assignment:
     // - Fill all courts in time slot 1, then all courts in time slot 2, etc.
@@ -293,7 +303,7 @@ export async function POST(request: NextRequest) {
         firstRoundGames: numFirstRoundGames,
         hasBye,
         courtsUsed: allCourts.length,
-        deletedOldGames: deletedGames.count,
+        deletedOldGames: deletedByDate.count + deletedPlayoffs.count,
       });
     }
 
@@ -336,7 +346,7 @@ export async function POST(request: NextRequest) {
       poolGamesCreated: createdPoolGames.length,
       totalGames: createdPoolGames.length,
       courtsUsed: allCourts.length,
-      deletedOldGames: deletedGames.count,
+      deletedOldGames: deletedByDate.count + deletedPlayoffs.count,
     });
 
   } catch (error) {
