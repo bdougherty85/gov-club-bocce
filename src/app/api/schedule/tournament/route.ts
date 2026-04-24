@@ -252,17 +252,26 @@ export async function POST(request: NextRequest) {
         for (let position = 0; position < numGamesThisRound; position++) {
           let homeTeamId: string | null = null;
           let awayTeamId: string | null = null;
+          let isByeGame = false;
 
           if (round === 1) {
             const matchup = firstRoundMatchups.find(m => m.position === position);
             if (matchup) {
               homeTeamId = matchup.homeTeamId;
               awayTeamId = matchup.awayTeamId;
+              isByeGame = awayTeamId === null; // Bye = no opponent
             }
           }
           // Later rounds: TBD until previous round completes
 
-          const courtAssignment = getCourtForRound();
+          // Only assign court/time for real matches (not byes)
+          let timeSlotId: string | null = null;
+          let courtId: string | null = null;
+          if (!isByeGame) {
+            const courtAssignment = getCourtForRound();
+            timeSlotId = courtAssignment.timeSlotId;
+            courtId = courtAssignment.courtId;
+          }
 
           const game = await prisma.game.create({
             data: {
@@ -270,12 +279,14 @@ export async function POST(request: NextRequest) {
               homeTeamId,
               awayTeamId,
               scheduledDate: gameDate,
-              timeSlotId: courtAssignment.timeSlotId,
-              courtId: courtAssignment.courtId,
+              timeSlotId,
+              courtId,
               isPlayoff: true,
               playoffRound: round,
               playoffPosition: position,
-              status: 'scheduled',
+              status: isByeGame ? 'completed' : 'scheduled', // Bye games auto-complete
+              homeScore: isByeGame ? 1 : null, // Bye team wins by default
+              awayScore: isByeGame ? 0 : null,
             },
           });
 
@@ -302,6 +313,24 @@ export async function POST(request: NextRequest) {
               data: { nextGameId: nextGame.id, nextGamePosition },
             });
           }
+        }
+      }
+
+      // Auto-advance bye game winners to Round 2
+      const r1Games = gamesByRound.get(1) || [];
+      for (const gameRef of r1Games) {
+        const game = await prisma.game.findUnique({
+          where: { id: gameRef.id },
+        });
+
+        // If bye game (completed with home team, no away team), advance winner
+        if (game && game.status === 'completed' && game.homeTeamId && !game.awayTeamId && game.nextGameId) {
+          const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
+          await prisma.game.update({
+            where: { id: game.nextGameId },
+            data: { [updateField]: game.homeTeamId },
+          });
+          console.log(`Bye winner ${game.homeTeamId} advanced to R2`);
         }
       }
 
