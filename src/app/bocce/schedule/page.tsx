@@ -951,10 +951,14 @@ export default function SchedulePage() {
                 .filter(d => tournamentData.divisionIds.includes(d.id))
                 .flatMap(d => d.teams);
               const numTeams = selectedTeams.length;
-              const maxR1Games = Math.floor(numTeams / 2);
+              // Max R1 games = ceil(teams/2) so all teams can start in R1 (one bye game if odd)
+              const maxR1Games = Math.ceil(numTeams / 2);
               const currentR1Games = tournamentData.firstRoundGames || maxR1Games;
-              const teamsPlayingR1 = currentR1Games * 2;
+              // Teams playing = 2 per game, but cap at actual team count
+              const teamsPlayingR1 = Math.min(currentR1Games * 2, numTeams);
               const teamsWithByes = numTeams - teamsPlayingR1;
+              // R1 bye games (games with only 1 team)
+              const r1ByeGames = (currentR1Games * 2) - teamsPlayingR1;
 
               return (
                 <div className="mt-4 pl-6 space-y-4">
@@ -986,8 +990,13 @@ export default function SchedulePage() {
                     <p className="font-medium text-blue-800">Bracket Summary:</p>
                     <ul className="text-blue-700 mt-1 space-y-0.5">
                       <li>• {numTeams} teams total</li>
-                      <li>• {teamsPlayingR1} teams play in Round 1 ({currentR1Games} games)</li>
-                      <li>• {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} get a bye to Round 2</li>
+                      <li>• Round 1: {currentR1Games} game{currentR1Games !== 1 ? 's' : ''}</li>
+                      {r1ByeGames > 0 && (
+                        <li>• {r1ByeGames} R1 bye game{r1ByeGames !== 1 ? 's' : ''} (team auto-advances)</li>
+                      )}
+                      {teamsWithByes > 0 && (
+                        <li>• {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} skip to Round 2</li>
+                      )}
                     </ul>
                   </div>
 
