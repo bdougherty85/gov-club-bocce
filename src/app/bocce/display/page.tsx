@@ -44,11 +44,17 @@ interface Settings {
   currentDivisionId: string | null;
 }
 
+interface ScheduleData {
+  games: Game[];
+  date: string;
+  isToday: boolean;
+}
+
 const ROTATION_INTERVAL = 15000; // 15 seconds between views
 
 export default function TVDisplayPage() {
   const [currentView, setCurrentView] = useState<'schedule' | 'bracket'>('schedule');
-  const [todayGames, setTodayGames] = useState<Game[]>([]);
+  const [scheduleData, setScheduleData] = useState<ScheduleData>({ games: [], date: '', isToday: true });
   const [playoffGames, setPlayoffGames] = useState<Game[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,25 +100,41 @@ export default function TVDisplayPage() {
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
       // Filter for today's games
-      const filtered = gamesData.filter((game: Game) => {
+      const todayGames = gamesData.filter((game: Game) => {
         const gameDateStr = game.scheduledDate.split('T')[0];
         return gameDateStr === todayStr && game.status !== 'cancelled';
       });
 
-      // Get playoff games for today
-      const todayPlayoffs = gamesData.filter((g: Game) => {
-        if (!g.isPlayoff) return false;
-        const gameDateStr = g.scheduledDate.split('T')[0];
-        return gameDateStr === todayStr;
-      });
+      // If no games today, find the next scheduled date
+      let displayGames = todayGames;
+      let displayDate = todayStr;
+      let isToday = true;
+
+      if (todayGames.length === 0) {
+        // Find future scheduled games
+        const futureGames = gamesData
+          .filter((game: Game) => {
+            const gameDateStr = game.scheduledDate.split('T')[0];
+            return gameDateStr > todayStr && game.status === 'scheduled';
+          })
+          .sort((a: Game, b: Game) => a.scheduledDate.localeCompare(b.scheduledDate));
+
+        if (futureGames.length > 0) {
+          // Get the next game date
+          const nextDate = futureGames[0].scheduledDate.split('T')[0];
+          displayGames = futureGames.filter((g: Game) => g.scheduledDate.split('T')[0] === nextDate);
+          displayDate = nextDate;
+          isToday = false;
+        }
+      }
+
+      setScheduleData({ games: displayGames, date: displayDate, isToday });
+
+      // Always show all playoff games for bracket (not just today's)
       const allPlayoffs = gamesData.filter((g: Game) => g.isPlayoff);
+      setPlayoffGames(allPlayoffs);
+      setHasPlayoffs(allPlayoffs.length > 0);
 
-      // Use today's playoffs if available, otherwise all playoffs
-      const playoffs = todayPlayoffs.length > 0 ? todayPlayoffs : allPlayoffs;
-      setPlayoffGames(playoffs);
-      setHasPlayoffs(playoffs.length > 0);
-
-      setTodayGames(filtered);
       setSettings(settingsData);
     } catch (error) {
       console.error('Failed to fetch data:', error);
@@ -148,18 +170,32 @@ export default function TVDisplayPage() {
 
   // Calculate current and next time slots based on current time
   const { currentSlotGames, nextSlotGames, currentSlotTime, nextSlotTime } = useMemo(() => {
-    if (todayGames.length === 0) {
+    const { games, isToday } = scheduleData;
+
+    if (games.length === 0) {
       return { currentSlotGames: [], nextSlotGames: [], currentSlotTime: null, nextSlotTime: null };
     }
 
     // Get unique time slots and sort them
-    const timeSlots = [...new Set(todayGames
+    const timeSlots = [...new Set(games
       .map(g => g.timeSlot?.startTime)
       .filter((t): t is string => t !== null && t !== undefined)
     )].sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
 
     if (timeSlots.length === 0) {
-      return { currentSlotGames: todayGames, nextSlotGames: [], currentSlotTime: null, nextSlotTime: null };
+      return { currentSlotGames: games, nextSlotGames: [], currentSlotTime: null, nextSlotTime: null };
+    }
+
+    // If showing future date, just show first two time slots
+    if (!isToday) {
+      const firstSlot = timeSlots[0];
+      const secondSlot = timeSlots[1] || null;
+      return {
+        currentSlotGames: games.filter(g => g.timeSlot?.startTime === firstSlot),
+        nextSlotGames: secondSlot ? games.filter(g => g.timeSlot?.startTime === secondSlot) : [],
+        currentSlotTime: firstSlot,
+        nextSlotTime: secondSlot,
+      };
     }
 
     const nowMinutes = getCurrentMinutes(currentTime);
@@ -170,7 +206,7 @@ export default function TVDisplayPage() {
 
     for (let i = 0; i < timeSlots.length; i++) {
       const slotMinutes = parseTimeToMinutes(timeSlots[i]);
-      const slotGames = todayGames.filter(g => g.timeSlot?.startTime === timeSlots[i]);
+      const slotGames = games.filter(g => g.timeSlot?.startTime === timeSlots[i]);
       const allCompleted = slotGames.every(g => g.status === 'completed');
 
       if (slotMinutes <= nowMinutes) {
@@ -199,8 +235,8 @@ export default function TVDisplayPage() {
     const currentSlot = timeSlots[currentSlotIndex];
     const nextSlot = timeSlots[currentSlotIndex + 1] || null;
 
-    const currentGames = todayGames.filter(g => g.timeSlot?.startTime === currentSlot);
-    const nextGames = nextSlot ? todayGames.filter(g => g.timeSlot?.startTime === nextSlot) : [];
+    const currentGames = games.filter(g => g.timeSlot?.startTime === currentSlot);
+    const nextGames = nextSlot ? games.filter(g => g.timeSlot?.startTime === nextSlot) : [];
 
     return {
       currentSlotGames: currentGames,
@@ -208,7 +244,7 @@ export default function TVDisplayPage() {
       currentSlotTime: currentSlot,
       nextSlotTime: nextSlot,
     };
-  }, [todayGames, currentTime, parseTimeToMinutes, getCurrentMinutes]);
+  }, [scheduleData, currentTime, parseTimeToMinutes, getCurrentMinutes]);
 
   if (loading) {
     return (
@@ -265,6 +301,8 @@ export default function TVDisplayPage() {
             currentSlotTime={currentSlotTime}
             nextSlotTime={nextSlotTime}
             currentTime={currentTime}
+            scheduleDate={scheduleData.date}
+            isToday={scheduleData.isToday}
           />
         ) : (
           <BracketView games={playoffGames} />
@@ -296,12 +334,16 @@ function ScheduleView({
   currentSlotTime,
   nextSlotTime,
   currentTime,
+  scheduleDate,
+  isToday,
 }: {
   currentSlotGames: Game[];
   nextSlotGames: Game[];
   currentSlotTime: string | null;
   nextSlotTime: string | null;
   currentTime: Date;
+  scheduleDate: string;
+  isToday: boolean;
 }) {
   if (currentSlotGames.length === 0 && nextSlotGames.length === 0) {
     return (
@@ -320,8 +362,8 @@ function ScheduleView({
               d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
             />
           </svg>
-          <h2 className="text-4xl font-bold mb-2">No Games Today</h2>
-          <p className="text-xl text-white/70">Check back on game day!</p>
+          <h2 className="text-4xl font-bold mb-2">No Upcoming Games</h2>
+          <p className="text-xl text-white/70">Check back later!</p>
         </div>
       </div>
     );
@@ -341,12 +383,30 @@ function ScheduleView({
   };
   const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
   const currentSlotMinutes = currentSlotTime ? parseTimeToMinutes(currentSlotTime) : 0;
-  const isCurrentSlotActive = currentSlotTime && currentSlotMinutes <= nowMinutes;
+  const isCurrentSlotActive = isToday && currentSlotTime && currentSlotMinutes <= nowMinutes;
   const allCurrentCompleted = currentSlotGames.every(g => g.status === 'completed');
+
+  // Format the schedule date for display
+  const formatScheduleDate = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    });
+  };
 
   return (
     <div className="h-full flex flex-col">
-      <h2 className="text-4xl font-bold mb-6 text-center">Court Schedule</h2>
+      <div className="text-center mb-6">
+        <h2 className="text-4xl font-bold">Court Schedule</h2>
+        {!isToday && (
+          <p className="text-2xl text-secondary mt-2">
+            Next Games: {formatScheduleDate(scheduleDate)}
+          </p>
+        )}
+      </div>
 
       <div className="flex-1 flex flex-col gap-6 overflow-auto">
         {/* Current Time Slot */}
@@ -356,19 +416,27 @@ function ScheduleView({
               <h3 className="text-3xl font-bold text-secondary">
                 {currentSlotTime || 'Current'}
               </h3>
-              {isCurrentSlotActive && !allCurrentCompleted && (
-                <span className="px-4 py-1 bg-green-500 text-white text-lg font-bold rounded-full animate-pulse">
-                  NOW PLAYING
-                </span>
-              )}
-              {allCurrentCompleted && (
-                <span className="px-4 py-1 bg-gray-500 text-white text-lg font-bold rounded-full">
-                  COMPLETED
-                </span>
-              )}
-              {!isCurrentSlotActive && (
+              {isToday ? (
+                <>
+                  {isCurrentSlotActive && !allCurrentCompleted && (
+                    <span className="px-4 py-1 bg-green-500 text-white text-lg font-bold rounded-full animate-pulse">
+                      NOW PLAYING
+                    </span>
+                  )}
+                  {allCurrentCompleted && (
+                    <span className="px-4 py-1 bg-gray-500 text-white text-lg font-bold rounded-full">
+                      COMPLETED
+                    </span>
+                  )}
+                  {!isCurrentSlotActive && !allCurrentCompleted && (
+                    <span className="px-4 py-1 bg-blue-500 text-white text-lg font-bold rounded-full">
+                      UPCOMING
+                    </span>
+                  )}
+                </>
+              ) : (
                 <span className="px-4 py-1 bg-blue-500 text-white text-lg font-bold rounded-full">
-                  UPCOMING
+                  SCHEDULED
                 </span>
               )}
             </div>
