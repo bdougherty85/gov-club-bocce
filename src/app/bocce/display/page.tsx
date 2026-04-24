@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Bracket from '@/components/Bracket';
 
 interface Team {
@@ -37,21 +37,6 @@ interface Game {
   nextGamePosition?: string | null;
 }
 
-interface Standing {
-  id: string;
-  team: Team;
-  wins: number;
-  losses: number;
-  pointsFor: number;
-  pointsAgainst: number;
-}
-
-interface Division {
-  id: string;
-  name: string;
-  standings: Standing[];
-}
-
 interface Settings {
   leagueName: string;
   primaryColor: string;
@@ -59,44 +44,48 @@ interface Settings {
   currentDivisionId: string | null;
 }
 
-const ROTATION_INTERVAL = 10000; // 10 seconds
+const ROTATION_INTERVAL = 15000; // 15 seconds between views
 
 export default function TVDisplayPage() {
-  const [currentView, setCurrentView] = useState<'schedule' | 'bracket' | 'standings'>('schedule');
+  const [currentView, setCurrentView] = useState<'schedule' | 'bracket'>('schedule');
   const [todayGames, setTodayGames] = useState<Game[]>([]);
   const [playoffGames, setPlayoffGames] = useState<Game[]>([]);
-  const [divisions, setDivisions] = useState<Division[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [hasPlayoffs, setHasPlayoffs] = useState(false);
-  const [isTournamentDay, setIsTournamentDay] = useState(false);
+
+  // Parse time string (e.g., "9:00" or "13:30") to minutes since midnight
+  const parseTimeToMinutes = useCallback((timeStr: string): number => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + (minutes || 0);
+  }, []);
+
+  // Get current time in minutes since midnight
+  const getCurrentMinutes = useCallback((date: Date): number => {
+    return date.getHours() * 60 + date.getMinutes();
+  }, []);
 
   // Advance to next view (called on click)
   const advanceView = () => {
     setCurrentView((prev) => {
       if (hasPlayoffs) {
-        if (prev === 'schedule') return 'bracket';
-        if (prev === 'bracket') return 'standings';
-        return 'schedule';
-      } else {
-        return prev === 'schedule' ? 'standings' : 'schedule';
+        return prev === 'schedule' ? 'bracket' : 'schedule';
       }
+      return 'schedule';
     });
   };
 
   // Fetch data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const [gamesRes, divisionsRes, settingsRes] = await Promise.all([
+      const [gamesRes, settingsRes] = await Promise.all([
         fetch('/api/games'),
-        fetch('/api/divisions'),
         fetch('/api/settings'),
       ]);
 
-      const [gamesData, divisionsData, settingsData] = await Promise.all([
+      const [gamesData, settingsData] = await Promise.all([
         gamesRes.json(),
-        divisionsRes.json(),
         settingsRes.json(),
       ]);
 
@@ -104,7 +93,7 @@ export default function TVDisplayPage() {
       const now = new Date();
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-      // Filter for today's games - compare date strings to avoid timezone issues
+      // Filter for today's games
       const filtered = gamesData.filter((game: Game) => {
         const gameDateStr = game.scheduledDate.split('T')[0];
         return gameDateStr === todayStr && game.status !== 'cancelled';
@@ -123,28 +112,23 @@ export default function TVDisplayPage() {
       setPlayoffGames(playoffs);
       setHasPlayoffs(playoffs.length > 0);
 
-      // Detect tournament day: multiple games today with playoffs
-      const isTournament = filtered.length >= 3 && todayPlayoffs.length > 0;
-      setIsTournamentDay(isTournament);
-
-      setTodayGames(filtered.length > 0 ? filtered : gamesData.filter((g: Game) => g.status === 'scheduled').slice(0, 6));
-      setDivisions(divisionsData);
+      setTodayGames(filtered);
       setSettings(settingsData);
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-    // Refresh data every 30 seconds
-    const dataInterval = setInterval(fetchData, 30000);
+    // Refresh data every 15 seconds to keep bracket up to date
+    const dataInterval = setInterval(fetchData, 15000);
     return () => clearInterval(dataInterval);
-  }, []);
+  }, [fetchData]);
 
-  // Update clock
+  // Update clock every second
   useEffect(() => {
     const clockInterval = setInterval(() => {
       setCurrentTime(new Date());
@@ -154,21 +138,77 @@ export default function TVDisplayPage() {
 
   // Auto-rotate views
   useEffect(() => {
+    if (!hasPlayoffs) return; // Don't rotate if no bracket
+
     const rotationInterval = setInterval(() => {
-      setCurrentView((prev) => {
-        if (hasPlayoffs) {
-          // Tournament mode: rotate schedule -> bracket -> standings
-          if (prev === 'schedule') return 'bracket';
-          if (prev === 'bracket') return 'standings';
-          return 'schedule';
-        } else {
-          // Regular mode: just schedule and standings
-          return prev === 'schedule' ? 'standings' : 'schedule';
-        }
-      });
+      setCurrentView((prev) => (prev === 'schedule' ? 'bracket' : 'schedule'));
     }, ROTATION_INTERVAL);
     return () => clearInterval(rotationInterval);
   }, [hasPlayoffs]);
+
+  // Calculate current and next time slots based on current time
+  const { currentSlotGames, nextSlotGames, currentSlotTime, nextSlotTime } = useMemo(() => {
+    if (todayGames.length === 0) {
+      return { currentSlotGames: [], nextSlotGames: [], currentSlotTime: null, nextSlotTime: null };
+    }
+
+    // Get unique time slots and sort them
+    const timeSlots = [...new Set(todayGames
+      .map(g => g.timeSlot?.startTime)
+      .filter((t): t is string => t !== null && t !== undefined)
+    )].sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+
+    if (timeSlots.length === 0) {
+      return { currentSlotGames: todayGames, nextSlotGames: [], currentSlotTime: null, nextSlotTime: null };
+    }
+
+    const nowMinutes = getCurrentMinutes(currentTime);
+
+    // Find current slot: the latest slot that has started but not all games completed
+    // Or if no slots have started, show the first one
+    let currentSlotIndex = -1;
+
+    for (let i = 0; i < timeSlots.length; i++) {
+      const slotMinutes = parseTimeToMinutes(timeSlots[i]);
+      const slotGames = todayGames.filter(g => g.timeSlot?.startTime === timeSlots[i]);
+      const allCompleted = slotGames.every(g => g.status === 'completed');
+
+      if (slotMinutes <= nowMinutes) {
+        // This slot has started
+        if (!allCompleted) {
+          currentSlotIndex = i; // Active slot
+        } else {
+          // All games completed, move to next
+          currentSlotIndex = i + 1;
+        }
+      } else if (currentSlotIndex === -1) {
+        // No slot has started yet, show first upcoming
+        currentSlotIndex = i;
+        break;
+      }
+    }
+
+    // Ensure we don't go past the end
+    if (currentSlotIndex >= timeSlots.length) {
+      currentSlotIndex = timeSlots.length - 1;
+    }
+    if (currentSlotIndex < 0) {
+      currentSlotIndex = 0;
+    }
+
+    const currentSlot = timeSlots[currentSlotIndex];
+    const nextSlot = timeSlots[currentSlotIndex + 1] || null;
+
+    const currentGames = todayGames.filter(g => g.timeSlot?.startTime === currentSlot);
+    const nextGames = nextSlot ? todayGames.filter(g => g.timeSlot?.startTime === nextSlot) : [];
+
+    return {
+      currentSlotGames: currentGames,
+      nextSlotGames: nextGames,
+      currentSlotTime: currentSlot,
+      nextSlotTime: nextSlot,
+    };
+  }, [todayGames, currentTime, parseTimeToMinutes, getCurrentMinutes]);
 
   if (loading) {
     return (
@@ -210,7 +250,7 @@ export default function TVDisplayPage() {
               })}
             </div>
             <div className="text-white/70">
-              {currentView === 'schedule' ? 'Schedule' : currentView === 'bracket' ? 'Bracket' : 'Standings'}
+              {currentView === 'schedule' ? 'Court Schedule' : 'Tournament Bracket'}
             </div>
           </div>
         </div>
@@ -219,40 +259,51 @@ export default function TVDisplayPage() {
       {/* Main Content */}
       <main className="p-8 h-[calc(100vh-120px)]">
         {currentView === 'schedule' ? (
-          <ScheduleView games={todayGames} />
-        ) : currentView === 'bracket' ? (
-          <BracketView games={playoffGames} />
+          <ScheduleView
+            currentSlotGames={currentSlotGames}
+            nextSlotGames={nextSlotGames}
+            currentSlotTime={currentSlotTime}
+            nextSlotTime={nextSlotTime}
+            currentTime={currentTime}
+          />
         ) : (
-          <StandingsView divisions={divisions} currentDivisionId={settings?.currentDivisionId} />
+          <BracketView games={playoffGames} />
         )}
       </main>
 
       {/* View Indicator */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-        <div
-          className={`w-3 h-3 rounded-full transition-all ${
-            currentView === 'schedule' ? 'bg-secondary scale-125' : 'bg-white/30'
-          }`}
-        />
-        {hasPlayoffs && (
+      {hasPlayoffs && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+          <div
+            className={`w-3 h-3 rounded-full transition-all ${
+              currentView === 'schedule' ? 'bg-secondary scale-125' : 'bg-white/30'
+            }`}
+          />
           <div
             className={`w-3 h-3 rounded-full transition-all ${
               currentView === 'bracket' ? 'bg-secondary scale-125' : 'bg-white/30'
             }`}
           />
-        )}
-        <div
-          className={`w-3 h-3 rounded-full transition-all ${
-            currentView === 'standings' ? 'bg-secondary scale-125' : 'bg-white/30'
-          }`}
-        />
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ScheduleView({ games }: { games: Game[] }) {
-  if (games.length === 0) {
+function ScheduleView({
+  currentSlotGames,
+  nextSlotGames,
+  currentSlotTime,
+  nextSlotTime,
+  currentTime,
+}: {
+  currentSlotGames: Game[];
+  nextSlotGames: Game[];
+  currentSlotTime: string | null;
+  nextSlotTime: string | null;
+  currentTime: Date;
+}) {
+  if (currentSlotGames.length === 0 && nextSlotGames.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center">
@@ -276,97 +327,149 @@ function ScheduleView({ games }: { games: Game[] }) {
     );
   }
 
-  // Group games by time slot and sort by time
-  const gamesByTime = games.reduce((acc, game) => {
-    const time = game.timeSlot?.startTime || 'ZZZ'; // ZZZ sorts TBD to end
-    if (!acc[time]) acc[time] = [];
-    acc[time].push(game);
-    return acc;
-  }, {} as Record<string, Game[]>);
+  // Sort games by court name
+  const sortByCourt = (games: Game[]) =>
+    [...games].sort((a, b) => (a.court?.name || '').localeCompare(b.court?.name || ''));
 
-  // Sort time slots properly (handle "9:00" vs "13:00")
-  const timeSlots = Object.keys(gamesByTime).sort((a, b) => {
-    if (a === 'ZZZ') return 1;
-    if (b === 'ZZZ') return -1;
-    // Parse time strings and compare
-    const [aH, aM] = a.split(':').map(Number);
-    const [bH, bM] = b.split(':').map(Number);
-    return (aH * 60 + aM) - (bH * 60 + bM);
-  });
+  const sortedCurrentGames = sortByCourt(currentSlotGames);
+  const sortedNextGames = sortByCourt(nextSlotGames);
 
-  // Sort games within each time slot by court name
-  Object.values(gamesByTime).forEach(gamesInSlot => {
-    gamesInSlot.sort((a, b) => (a.court?.name || '').localeCompare(b.court?.name || ''));
-  });
+  // Check if current slot is happening now or upcoming
+  const parseTimeToMinutes = (timeStr: string): number => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + (minutes || 0);
+  };
+  const nowMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const currentSlotMinutes = currentSlotTime ? parseTimeToMinutes(currentSlotTime) : 0;
+  const isCurrentSlotActive = currentSlotTime && currentSlotMinutes <= nowMinutes;
+  const allCurrentCompleted = currentSlotGames.every(g => g.status === 'completed');
 
   return (
-    <div className="h-full overflow-auto">
-      <h2 className="text-4xl font-bold mb-6 text-center">
-        Today&apos;s Schedule
-      </h2>
-      <div className="space-y-6">
-        {timeSlots.map((time) => (
-          <div key={time} className="bg-white/10 backdrop-blur rounded-2xl p-6">
-            <h3 className="text-2xl font-bold text-secondary mb-4">{time === 'ZZZ' ? 'TBD' : time}</h3>
+    <div className="h-full flex flex-col">
+      <h2 className="text-4xl font-bold mb-6 text-center">Court Schedule</h2>
+
+      <div className="flex-1 flex flex-col gap-6 overflow-auto">
+        {/* Current Time Slot */}
+        {currentSlotGames.length > 0 && (
+          <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-3xl font-bold text-secondary">
+                {currentSlotTime || 'Current'}
+              </h3>
+              {isCurrentSlotActive && !allCurrentCompleted && (
+                <span className="px-4 py-1 bg-green-500 text-white text-lg font-bold rounded-full animate-pulse">
+                  NOW PLAYING
+                </span>
+              )}
+              {allCurrentCompleted && (
+                <span className="px-4 py-1 bg-gray-500 text-white text-lg font-bold rounded-full">
+                  COMPLETED
+                </span>
+              )}
+              {!isCurrentSlotActive && (
+                <span className="px-4 py-1 bg-blue-500 text-white text-lg font-bold rounded-full">
+                  UPCOMING
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {gamesByTime[time].map((game) => (
-                <div
-                  key={game.id}
-                  className={`p-4 rounded-xl ${
-                    game.isPlayoff ? 'bg-yellow-500/20 border border-yellow-500/50' : 'bg-white/5'
-                  }`}
-                >
-                  {/* Court */}
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="px-2 py-0.5 bg-secondary text-primary text-sm rounded font-bold">
-                      {game.court?.name || 'TBD'}
-                    </span>
-                    {game.isPlayoff && (
-                      <span className="text-yellow-400 text-xs font-bold">PLAYOFF</span>
-                    )}
-                  </div>
-
-                  {/* Matchup */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className={`font-semibold ${game.status === 'completed' && game.homeScore! > game.awayScore! ? 'text-green-400' : ''}`}>
-                        {game.homeTeam?.name || 'TBD'}
-                      </span>
-                      {game.status === 'completed' && (
-                        <span className="font-bold text-xl">{game.homeScore}</span>
-                      )}
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className={`font-semibold ${game.status === 'completed' && game.awayScore! > game.homeScore! ? 'text-green-400' : ''}`}>
-                        {game.awayTeam?.name || 'TBD'}
-                      </span>
-                      {game.status === 'completed' && (
-                        <span className="font-bold text-xl">{game.awayScore}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Status badge */}
-                  {game.status === 'in_progress' && (
-                    <div className="mt-2 text-center">
-                      <span className="px-2 py-0.5 bg-yellow-500 text-black text-xs font-bold rounded animate-pulse">
-                        LIVE
-                      </span>
-                    </div>
-                  )}
-                  {game.status === 'completed' && (
-                    <div className="mt-2 text-center">
-                      <span className="px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded">
-                        FINAL
-                      </span>
-                    </div>
-                  )}
-                </div>
+              {sortedCurrentGames.map((game) => (
+                <GameCard key={game.id} game={game} />
               ))}
             </div>
           </div>
-        ))}
+        )}
+
+        {/* Next Time Slot */}
+        {nextSlotGames.length > 0 && (
+          <div className="bg-white/5 backdrop-blur rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-2xl font-bold text-white/70">
+                Up Next: {nextSlotTime}
+              </h3>
+              <span className="px-3 py-1 bg-white/20 text-white/70 text-sm font-bold rounded-full">
+                ON DECK
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {sortedNextGames.map((game) => (
+                <GameCard key={game.id} game={game} dimmed />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function GameCard({ game, dimmed = false }: { game: Game; dimmed?: boolean }) {
+  const isLive = game.status === 'in_progress';
+  const isCompleted = game.status === 'completed';
+  const homeWon = isCompleted && game.homeScore! > game.awayScore!;
+  const awayWon = isCompleted && game.awayScore! > game.homeScore!;
+
+  return (
+    <div
+      className={`p-4 rounded-xl transition-all ${
+        isLive
+          ? 'bg-yellow-500/30 border-2 border-yellow-500 animate-pulse'
+          : game.isPlayoff
+            ? 'bg-yellow-500/20 border border-yellow-500/50'
+            : dimmed
+              ? 'bg-white/5'
+              : 'bg-white/10'
+      } ${dimmed ? 'opacity-70' : ''}`}
+    >
+      {/* Court Header */}
+      <div className="flex justify-between items-center mb-3">
+        <span className={`px-3 py-1 bg-secondary text-primary font-bold rounded ${dimmed ? 'text-sm' : 'text-base'}`}>
+          {game.court?.name || 'TBD'}
+        </span>
+        {game.isPlayoff && (
+          <span className={`text-yellow-400 font-bold ${dimmed ? 'text-xs' : 'text-sm'}`}>
+            PLAYOFF
+          </span>
+        )}
+        {isLive && (
+          <span className="px-2 py-0.5 bg-yellow-500 text-black text-xs font-bold rounded">
+            LIVE
+          </span>
+        )}
+      </div>
+
+      {/* Teams */}
+      <div className="space-y-2">
+        <div className={`flex justify-between items-center ${dimmed ? 'text-base' : 'text-lg'}`}>
+          <span className={`font-semibold truncate flex-1 ${homeWon ? 'text-green-400' : ''}`}>
+            {game.homeTeam?.name || 'TBD'}
+          </span>
+          {isCompleted && (
+            <span className={`font-bold text-2xl ml-2 ${homeWon ? 'text-green-400' : 'text-white/50'}`}>
+              {game.homeScore}
+            </span>
+          )}
+        </div>
+        <div className={`flex justify-between items-center ${dimmed ? 'text-base' : 'text-lg'}`}>
+          <span className={`font-semibold truncate flex-1 ${awayWon ? 'text-green-400' : ''}`}>
+            {game.awayTeam?.name || 'TBD'}
+          </span>
+          {isCompleted && (
+            <span className={`font-bold text-2xl ml-2 ${awayWon ? 'text-green-400' : 'text-white/50'}`}>
+              {game.awayScore}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Status */}
+      {isCompleted && (
+        <div className="mt-3 text-center">
+          <span className="px-3 py-1 bg-green-500/30 text-green-400 text-sm font-bold rounded">
+            FINAL
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -404,73 +507,6 @@ function BracketView({ games }: { games: Game[] }) {
           compact={false}
           showControls={false}
         />
-      </div>
-    </div>
-  );
-}
-
-function StandingsView({ divisions, currentDivisionId }: { divisions: Division[]; currentDivisionId?: string | null }) {
-  // Filter to show only the current division if set
-  const filteredDivisions = currentDivisionId
-    ? divisions.filter(d => d.id === currentDivisionId)
-    : divisions;
-
-  if (filteredDivisions.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-4xl font-bold">No Standings Available</h2>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="h-full overflow-auto">
-      <h2 className="text-4xl font-bold mb-6 text-center">
-        {currentDivisionId ? filteredDivisions[0]?.name + ' Standings' : 'Standings'}
-      </h2>
-      <div className={`grid gap-8 ${filteredDivisions.length === 1 ? 'grid-cols-1 max-w-3xl mx-auto' : 'grid-cols-1 lg:grid-cols-2'}`}>
-        {filteredDivisions.map((division) => (
-          <div key={division.id} className="bg-white/10 backdrop-blur rounded-2xl p-6">
-            <h3 className="text-2xl font-bold mb-4 text-secondary">{division.name}</h3>
-            <table className="w-full">
-              <thead>
-                <tr className="text-white/70 text-left border-b border-white/20">
-                  <th className="py-2 text-lg">#</th>
-                  <th className="py-2 text-lg">Team</th>
-                  <th className="py-2 text-lg text-center">W</th>
-                  <th className="py-2 text-lg text-center">L</th>
-                  <th className="py-2 text-lg text-center">PF</th>
-                  <th className="py-2 text-lg text-center">PA</th>
-                </tr>
-              </thead>
-              <tbody>
-                {division.standings
-                  ?.sort((a, b) => b.wins - a.wins || b.pointsFor - a.pointsFor)
-                  .map((standing, index) => (
-                    <tr
-                      key={standing.id}
-                      className={`border-b border-white/10 ${
-                        index < 4 ? 'text-white' : 'text-white/70'
-                      }`}
-                    >
-                      <td className="py-3 text-xl font-bold">{index + 1}</td>
-                      <td className="py-3 text-xl font-semibold">{standing.team.name}</td>
-                      <td className="py-3 text-xl text-center font-bold text-green-400">
-                        {standing.wins}
-                      </td>
-                      <td className="py-3 text-xl text-center font-bold text-red-400">
-                        {standing.losses}
-                      </td>
-                      <td className="py-3 text-xl text-center">{standing.pointsFor}</td>
-                      <td className="py-3 text-xl text-center">{standing.pointsAgainst}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
       </div>
     </div>
   );
