@@ -27,9 +27,10 @@ interface BracketProps {
   onEditGame?: (game: BracketGame) => void;
   compact?: boolean;
   showControls?: boolean;
+  darkMode?: boolean;
 }
 
-export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGame, compact = false, showControls = true }: BracketProps) {
+export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGame, compact = false, showControls = true, darkMode = false }: BracketProps) {
   if (games.length === 0) {
     return (
       <div className="text-center py-8 text-muted">
@@ -103,14 +104,14 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
           {rounds.map((round) => (
             <div
               key={`header-${round}`}
-              className={`text-center font-semibold text-foreground ${compact ? 'text-sm' : 'text-base'}`}
+              className={`text-center font-semibold ${darkMode ? 'text-white' : 'text-foreground'} ${compact ? 'text-sm' : 'text-base'}`}
               style={{ width: `${matchupWidth}px` }}
             >
               {getRoundName(round)}
             </div>
           ))}
           <div
-            className={`text-center font-semibold text-foreground ${compact ? 'text-sm' : 'text-base'}`}
+            className={`text-center font-semibold ${darkMode ? 'text-white' : 'text-foreground'} ${compact ? 'text-sm' : 'text-base'}`}
             style={{ width: `${matchupWidth}px` }}
           >
             Champion
@@ -157,27 +158,28 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
               const endX = nextRoundX;
               const midX = startX + connectorWidth / 2;
 
+              const strokeColor = darkMode ? '#ffffff' : '#d1d5db';
               return (
                 <g key={`connector-${round}-${idx}`}>
                   {/* Line from top game to middle */}
                   <path
                     d={`M ${startX} ${y1} H ${midX} V ${midY}`}
                     fill="none"
-                    stroke="#d1d5db"
+                    stroke={strokeColor}
                     strokeWidth="2"
                   />
                   {/* Line from bottom game to middle */}
                   <path
                     d={`M ${startX} ${y2} H ${midX} V ${midY}`}
                     fill="none"
-                    stroke="#d1d5db"
+                    stroke={strokeColor}
                     strokeWidth="2"
                   />
                   {/* Line from middle to next round */}
                   <path
                     d={`M ${midX} ${midY} H ${endX}`}
                     fill="none"
-                    stroke="#d1d5db"
+                    stroke={strokeColor}
                     strokeWidth="2"
                   />
                 </g>
@@ -187,7 +189,6 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
 
           {/* Final connector to champion */}
           {gamesByRound[maxRound]?.[0] && (() => {
-            const finalsGame = gamesByRound[maxRound][0];
             const finalsX = (maxRound - 1) * (matchupWidth + connectorWidth);
 
             // Calculate finals Y position
@@ -203,7 +204,7 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
               <path
                 d={`M ${startX} ${finalsY} H ${endX}`}
                 fill="none"
-                stroke="#d1d5db"
+                stroke={darkMode ? '#ffffff' : '#d1d5db'}
                 strokeWidth="2"
               />
             );
@@ -238,9 +239,17 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
                     height: `${matchupHeight}px`,
                   }}
                 >
-                  <div className="h-full bg-white border border-gray-300 rounded shadow-sm overflow-hidden flex flex-col relative">
+                  <div className={`h-full rounded shadow-sm overflow-hidden flex flex-col relative ${
+                  darkMode
+                    ? 'bg-gray-800 border-2 border-gray-600'
+                    : 'bg-white border border-gray-300'
+                }`}>
                     {/* Court & Time header with Edit button */}
-                    <div className={`flex justify-between items-center bg-gray-100 border-b border-gray-200 ${compact ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} text-gray-500`}>
+                    <div className={`flex justify-between items-center ${
+                      darkMode ? 'bg-gray-700 border-b border-gray-600' : 'bg-gray-100 border-b border-gray-200'
+                    } ${compact ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} ${
+                      darkMode ? 'text-gray-300' : 'text-gray-500'
+                    }`}>
                       <span className="font-medium">{game.court?.name || 'No Court'}</span>
                       <div className="flex items-center gap-1">
                         <span>{game.timeSlot?.startTime || ''}</span>
@@ -260,12 +269,14 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
 
                     {/* Home team */}
                     <div
-                      className={`flex-1 flex justify-between items-center border-b border-gray-200 cursor-pointer transition-colors ${
-                        compact ? 'px-2 text-xs' : 'px-3 text-sm'
-                      } ${
+                      className={`flex-1 flex justify-between items-center cursor-pointer transition-colors ${
+                        darkMode ? 'border-b border-gray-600' : 'border-b border-gray-200'
+                      } ${compact ? 'px-2 text-xs' : 'px-3 text-sm'} ${
                         winner?.id === game.homeTeam?.id
-                          ? 'bg-green-100 font-semibold'
-                          : winner && game.homeTeam ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'
+                          ? darkMode ? 'bg-green-700 text-white font-semibold' : 'bg-green-100 font-semibold'
+                          : winner && game.homeTeam
+                            ? darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-50 text-gray-400'
+                            : darkMode ? 'text-white hover:bg-gray-700' : 'hover:bg-gray-50'
                       }`}
                       onClick={() => handleTeamClick(game, game.homeTeam)}
                     >
@@ -283,8 +294,10 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
                         compact ? 'px-2 text-xs' : 'px-3 text-sm'
                       } ${
                         winner?.id === game.awayTeam?.id
-                          ? 'bg-green-100 font-semibold'
-                          : winner && game.awayTeam ? 'bg-gray-50 text-gray-400' : 'hover:bg-gray-50'
+                          ? darkMode ? 'bg-green-700 text-white font-semibold' : 'bg-green-100 font-semibold'
+                          : winner && game.awayTeam
+                            ? darkMode ? 'bg-gray-700 text-gray-500' : 'bg-gray-50 text-gray-400'
+                            : darkMode ? 'text-white hover:bg-gray-700' : 'hover:bg-gray-50'
                       }`}
                       onClick={() => handleTeamClick(game, game.awayTeam)}
                     >
@@ -325,7 +338,9 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGa
                 <div className={`h-full flex items-center justify-center rounded shadow-sm ${
                   champion
                     ? 'bg-gradient-to-r from-yellow-400 to-yellow-500 text-white font-bold'
-                    : 'bg-gray-100 border border-gray-300 text-gray-400'
+                    : darkMode
+                      ? 'bg-gray-800 border-2 border-gray-600 text-gray-400'
+                      : 'bg-gray-100 border border-gray-300 text-gray-400'
                 }`}>
                   <div className="text-center px-2">
                     <div className={compact ? 'text-sm' : 'text-base'}>

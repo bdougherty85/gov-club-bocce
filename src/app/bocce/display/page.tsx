@@ -556,26 +556,25 @@ function BracketView({ games }: { games: Game[] }) {
   return (
     <div className="h-full overflow-auto">
       <h2 className="text-4xl font-bold mb-6 text-center">Tournament Bracket</h2>
-      <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
-        <Bracket
-          games={games.map(g => ({
-            id: g.id,
-            playoffRound: g.playoffRound || 1,
-            playoffPosition: g.playoffPosition || 0,
-            homeTeam: g.homeTeam,
-            awayTeam: g.awayTeam,
-            homeScore: g.homeScore,
-            awayScore: g.awayScore,
-            status: g.status,
-            nextGameId: g.nextGameId || null,
-            nextGamePosition: g.nextGamePosition || null,
-            court: g.court ? { name: g.court.name } : null,
-            timeSlot: g.timeSlot ? { startTime: g.timeSlot.startTime } : null,
-          }))}
-          compact={false}
-          showControls={false}
-        />
-      </div>
+      <Bracket
+        games={games.map(g => ({
+          id: g.id,
+          playoffRound: g.playoffRound || 1,
+          playoffPosition: g.playoffPosition || 0,
+          homeTeam: g.homeTeam,
+          awayTeam: g.awayTeam,
+          homeScore: g.homeScore,
+          awayScore: g.awayScore,
+          status: g.status,
+          nextGameId: g.nextGameId || null,
+          nextGamePosition: g.nextGamePosition || null,
+          court: g.court ? { name: g.court.name } : null,
+          timeSlot: g.timeSlot ? { startTime: g.timeSlot.startTime } : null,
+        }))}
+        compact={false}
+        showControls={false}
+        darkMode={true}
+      />
     </div>
   );
 }
