@@ -44,9 +44,9 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
           onClick={onClose}
         />
         <div
-          className={`relative w-full ${sizes[size]} bg-white rounded-xl shadow-xl transform transition-all`}
+          className={`relative w-full ${sizes[size]} bg-white rounded-xl shadow-xl transform transition-all max-h-[90vh] flex flex-col`}
         >
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
             <h2 className="text-xl font-semibold text-foreground">{title}</h2>
             <button
               onClick={onClose}
@@ -67,7 +67,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md' }:
               </svg>
             </button>
           </div>
-          <div className="p-6">{children}</div>
+          <div className="p-6 overflow-y-auto">{children}</div>
         </div>
       </div>
     </div>
