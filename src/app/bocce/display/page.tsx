@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Bracket from '@/components/Bracket';
 
 interface Team {
@@ -54,6 +54,7 @@ const ROTATION_INTERVAL = 15000; // 15 seconds between views
 
 export default function TVDisplayPage() {
   const [currentView, setCurrentView] = useState<'schedule' | 'bracket'>('schedule');
+  const [bracketViewCount, setBracketViewCount] = useState(0);
   const [scheduleData, setScheduleData] = useState<ScheduleData>({ games: [], date: '', isToday: true });
   const [playoffGames, setPlayoffGames] = useState<Game[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -76,7 +77,11 @@ export default function TVDisplayPage() {
   const advanceView = () => {
     setCurrentView((prev) => {
       if (hasPlayoffs) {
-        return prev === 'schedule' ? 'bracket' : 'schedule';
+        if (prev === 'schedule') {
+          setBracketViewCount(c => c + 1); // Reset bracket scroll
+          return 'bracket';
+        }
+        return 'schedule';
       }
       return 'schedule';
     });
@@ -163,7 +168,13 @@ export default function TVDisplayPage() {
     if (!hasPlayoffs) return; // Don't rotate if no bracket
 
     const rotationInterval = setInterval(() => {
-      setCurrentView((prev) => (prev === 'schedule' ? 'bracket' : 'schedule'));
+      setCurrentView((prev) => {
+        if (prev === 'schedule') {
+          setBracketViewCount(c => c + 1); // Reset bracket scroll on each view
+          return 'bracket';
+        }
+        return 'schedule';
+      });
     }, ROTATION_INTERVAL);
     return () => clearInterval(rotationInterval);
   }, [hasPlayoffs]);
@@ -305,7 +316,7 @@ export default function TVDisplayPage() {
             isToday={scheduleData.isToday}
           />
         ) : (
-          <BracketView games={playoffGames} />
+          <BracketView key={`bracket-${bracketViewCount}`} games={playoffGames} />
         )}
       </main>
 
@@ -543,6 +554,48 @@ function GameCard({ game, dimmed = false }: { game: Game; dimmed?: boolean }) {
 }
 
 function BracketView({ games }: { games: Game[] }) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll effect - scrolls down slowly over the display duration
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    // Reset scroll to top
+    container.scrollTop = 0;
+
+    // Wait a moment before starting scroll
+    const startDelay = setTimeout(() => {
+      const scrollHeight = container.scrollHeight - container.clientHeight;
+
+      if (scrollHeight <= 0) return; // No scrolling needed
+
+      // Scroll duration: leave 2 seconds at start and end for viewing
+      const scrollDuration = ROTATION_INTERVAL - 4000; // 11 seconds of scrolling
+      const startTime = Date.now();
+
+      const animateScroll = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / scrollDuration, 1);
+
+        // Ease in-out for smooth start and stop
+        const easeProgress = progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+
+        container.scrollTop = easeProgress * scrollHeight;
+
+        if (progress < 1) {
+          requestAnimationFrame(animateScroll);
+        }
+      };
+
+      requestAnimationFrame(animateScroll);
+    }, 2000); // Start scrolling after 2 seconds
+
+    return () => clearTimeout(startDelay);
+  }, [games]);
+
   if (games.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -554,7 +607,7 @@ function BracketView({ games }: { games: Game[] }) {
   }
 
   return (
-    <div className="h-full overflow-auto">
+    <div ref={scrollContainerRef} className="h-full overflow-hidden">
       <h2 className="text-4xl font-bold mb-6 text-center">Tournament Bracket</h2>
       <Bracket
         games={games.map(g => ({
