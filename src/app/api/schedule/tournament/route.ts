@@ -153,99 +153,89 @@ export async function POST(request: NextRequest) {
 
     console.log('Courts:', numCourts, 'Time slots:', timeSlots.length);
 
-    // SINGLE ELIMINATION BRACKET
+    // SINGLE ELIMINATION BRACKET (Power of 2)
     if (format === 'single_elimination') {
       const numTeams = allTeams.length;
 
-      // Max R1 games = ceil(teams/2) so all teams can start in R1
-      const maxR1Games = Math.ceil(numTeams / 2);
-      const numFirstRoundGames = firstRoundGames > 0
-        ? Math.min(firstRoundGames, maxR1Games)
-        : maxR1Games;
+      // R1 games must be power of 2, default to smallest that fits all teams
+      const defaultR1Games = Math.pow(2, Math.ceil(Math.log2(Math.ceil(numTeams / 2))));
+      const numFirstRoundGames = firstRoundGames > 0 ? firstRoundGames : defaultR1Games;
 
-      // Teams in R1 = 2 per game, capped at actual team count
-      const numTeamsInR1 = Math.min(numFirstRoundGames * 2, numTeams);
-      // Teams that skip R1 entirely (go directly to R2)
-      const numTeamsWithByes = numTeams - numTeamsInR1;
-      // R1 bye games = games where only 1 team (auto-advance)
-      const numR1ByeGames = (numFirstRoundGames * 2) - numTeamsInR1;
+      // Total slots = R1 games * 2, byes fill the gap
+      const totalSlots = numFirstRoundGames * 2;
+      const numByes = Math.max(0, totalSlots - numTeams);
 
-      // Determine which teams skip R1 (prioritize manually selected for byes)
+      // Separate bye teams from teams that play
       const manualByeTeams = allTeams.filter(t => byeTeamIds.includes(t.id));
       const otherTeams = allTeams.filter(t => !byeTeamIds.includes(t.id));
 
-      // Assign R2 byes: manual selections first, then from end of other teams list
-      const actualManualByes = Math.min(manualByeTeams.length, numTeamsWithByes);
-      const naturalByes = numTeamsWithByes - actualManualByes;
+      // Assign byes: manual first, then from end of list
+      const actualManualByes = Math.min(manualByeTeams.length, numByes);
+      const autoByes = numByes - actualManualByes;
 
-      const teamsSkippingToR2 = [
+      const teamsWithByes = [
         ...manualByeTeams.slice(0, actualManualByes),
-        ...otherTeams.slice(otherTeams.length - naturalByes),
+        ...otherTeams.slice(Math.max(0, otherTeams.length - autoByes)),
       ];
-      const teamsInRound1 = [
+      const teamsWithOpponents = [
         ...manualByeTeams.slice(actualManualByes),
-        ...otherTeams.slice(0, otherTeams.length - naturalByes),
+        ...otherTeams.slice(0, Math.max(0, otherTeams.length - autoByes)),
       ];
 
-      // Calculate rounds needed
-      // After R1: numFirstRoundGames winners + numTeamsWithByes teams
-      let teamsRemaining = numFirstRoundGames + numTeamsWithByes;
-      let rounds = 1;
-      while (teamsRemaining > 1) {
-        teamsRemaining = Math.ceil(teamsRemaining / 2);
-        rounds++;
-      }
+      // Calculate rounds: log2 of R1 games + 1 (R1, R2, ..., Finals)
+      const rounds = Math.log2(numFirstRoundGames) + 1;
 
-      console.log(`Creating bracket: ${numTeams} teams`);
-      console.log(`R1: ${numFirstRoundGames} games, ${numTeamsInR1} teams, ${numR1ByeGames} bye games`);
-      console.log(`Skip to R2: ${numTeamsWithByes} (${actualManualByes} manual, ${naturalByes} auto)`);
-      console.log(`Teams in R1:`, teamsInRound1.map(t => t.name));
-      console.log(`Teams skipping to R2:`, teamsSkippingToR2.map(t => t.name));
-      console.log(`Total rounds: ${rounds}`);
+      console.log(`Creating bracket: ${numTeams} teams, ${numFirstRoundGames} R1 games (${totalSlots} slots)`);
+      console.log(`Byes: ${numByes} (${actualManualByes} manual, ${autoByes} auto)`);
+      console.log(`Teams with byes:`, teamsWithByes.map(t => t.name));
+      console.log(`Teams with opponents:`, teamsWithOpponents.map(t => t.name));
+      console.log(`Rounds: ${rounds}`);
 
+      // Build R1 matchups: pair teams, bye teams get null opponent
       interface Matchup {
         homeTeamId: string;
         awayTeamId: string | null;
         position: number;
       }
 
-      // Create first round matchups
       const firstRoundMatchups: Matchup[] = [];
-      let teamIdx = 0;
-      for (let gameNum = 0; gameNum < numFirstRoundGames; gameNum++) {
-        // Get home team (always exists if we have teams left)
-        const homeTeam = teamIdx < teamsInRound1.length ? teamsInRound1[teamIdx] : null;
-        if (homeTeam) teamIdx++;
 
-        // Get away team (may be null for bye games)
-        const awayTeam = teamIdx < teamsInRound1.length ? teamsInRound1[teamIdx] : null;
-        if (awayTeam) teamIdx++;
+      // Strategy: Place bye teams first (they get TBD opponents), then pair remaining teams
+      // Bye teams go in positions 0, 1, 2... so they advance to top of bracket
+      for (let i = 0; i < teamsWithByes.length; i++) {
+        firstRoundMatchups.push({
+          homeTeamId: teamsWithByes[i].id,
+          awayTeamId: null, // TBD = bye
+          position: i,
+        });
+      }
 
-        // Only create game if we have at least a home team
-        if (homeTeam) {
+      // Remaining slots get paired teams
+      let pairIdx = 0;
+      for (let pos = teamsWithByes.length; pos < numFirstRoundGames; pos++) {
+        const homeTeam = teamsWithOpponents[pairIdx++];
+        const awayTeam = teamsWithOpponents[pairIdx++];
+        if (homeTeam && awayTeam) {
           firstRoundMatchups.push({
             homeTeamId: homeTeam.id,
-            awayTeamId: awayTeam?.id || null,
-            position: gameNum,
+            awayTeamId: awayTeam.id,
+            position: pos,
           });
         }
       }
 
-      console.log('First round matchups:', firstRoundMatchups.map(m => ({
+      console.log('R1 matchups:', firstRoundMatchups.map(m => ({
         pos: m.position,
         home: allTeams.find(t => t.id === m.homeTeamId)?.name,
-        away: m.awayTeamId ? allTeams.find(t => t.id === m.awayTeamId)?.name : 'BYE',
+        away: m.awayTeamId ? allTeams.find(t => t.id === m.awayTeamId)?.name : 'TBD (bye)',
       })));
 
-      // Calculate games per round based on teams advancing
+      // Games per round: R1 = numFirstRoundGames, then halves each round
       const gamesPerRound: number[] = [0]; // index 0 unused
-      gamesPerRound.push(numFirstRoundGames); // Round 1
-
-      let teamsInRound = numFirstRoundGames + numTeamsWithByes; // Teams after R1
-      for (let r = 2; r <= rounds; r++) {
-        const gamesThisRound = Math.ceil(teamsInRound / 2);
-        gamesPerRound.push(gamesThisRound);
-        teamsInRound = gamesThisRound; // Winners advance to next round
+      let gamesInRound = numFirstRoundGames;
+      for (let r = 1; r <= rounds; r++) {
+        gamesPerRound.push(gamesInRound);
+        gamesInRound = Math.floor(gamesInRound / 2);
       }
       console.log('Games per round:', gamesPerRound);
 
@@ -253,53 +243,10 @@ export async function POST(request: NextRequest) {
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
       let totalGames = 0;
 
-      // Round 2 receives R1 winners + bye teams
-      // Calculate which R2 positions get bye teams vs R1 winners
-      const numR2Games = gamesPerRound[2] || 0;
-
-      // Map R2 game positions to their sources
-      // Each R2 game can have: 2 R1 winners, 1 R1 winner + 1 bye, or 2 byes
-      interface R2Source {
-        homeSource: { type: 'r1' | 'bye'; r1Position?: number; byeTeam?: typeof teamsSkippingToR2[0] };
-        awaySource: { type: 'r1' | 'bye'; r1Position?: number; byeTeam?: typeof teamsSkippingToR2[0] };
-      }
-      const r2Sources: R2Source[] = [];
-
-      let r1PositionCounter = 0;
-      let byeTeamIndex = 0;
-
-      for (let r2Pos = 0; r2Pos < numR2Games; r2Pos++) {
-        // Each R2 game needs 2 sources (home slot and away slot)
-        const sources: R2Source = { homeSource: { type: 'bye' }, awaySource: { type: 'bye' } };
-
-        // Home slot (corresponds to R1 positions 2*r2Pos)
-        if (r1PositionCounter < numFirstRoundGames) {
-          sources.homeSource = { type: 'r1', r1Position: r1PositionCounter++ };
-        } else if (byeTeamIndex < teamsSkippingToR2.length) {
-          sources.homeSource = { type: 'bye', byeTeam: teamsSkippingToR2[byeTeamIndex++] };
-        }
-
-        // Away slot (corresponds to R1 positions 2*r2Pos + 1)
-        if (r1PositionCounter < numFirstRoundGames) {
-          sources.awaySource = { type: 'r1', r1Position: r1PositionCounter++ };
-        } else if (byeTeamIndex < teamsSkippingToR2.length) {
-          sources.awaySource = { type: 'bye', byeTeam: teamsSkippingToR2[byeTeamIndex++] };
-        }
-
-        r2Sources.push(sources);
-      }
-
-      console.log('R2 sources:', r2Sources.map((s, i) => ({
-        r2Pos: i,
-        home: s.homeSource.type === 'bye' ? `BYE:${s.homeSource.byeTeam?.name}` : `R1:${s.homeSource.r1Position}`,
-        away: s.awaySource.type === 'bye' ? `BYE:${s.awaySource.byeTeam?.name}` : `R1:${s.awaySource.r1Position}`,
-      })));
-
       for (let round = 1; round <= rounds; round++) {
         const numGamesThisRound = gamesPerRound[round];
         const roundGames: { id: string; position: number }[] = [];
 
-        // Start new round - moves to next time slot after previous round
         startNewRound(round, numGamesThisRound);
 
         for (let position = 0; position < numGamesThisRound; position++) {
@@ -307,30 +254,15 @@ export async function POST(request: NextRequest) {
           let awayTeamId: string | null = null;
 
           if (round === 1) {
-            // First round - assign teams from matchups
-            const matchup = firstRoundMatchups[position];
+            const matchup = firstRoundMatchups.find(m => m.position === position);
             if (matchup) {
               homeTeamId = matchup.homeTeamId;
               awayTeamId = matchup.awayTeamId;
             }
-          } else if (round === 2) {
-            // Round 2 - place bye teams directly
-            const source = r2Sources[position];
-            if (source?.homeSource.type === 'bye' && source.homeSource.byeTeam) {
-              homeTeamId = source.homeSource.byeTeam.id;
-            }
-            if (source?.awaySource.type === 'bye' && source.awaySource.byeTeam) {
-              awayTeamId = source.awaySource.byeTeam.id;
-            }
           }
-          // Rounds 3+: teams TBD until previous round completes
+          // Later rounds: TBD until previous round completes
 
-          // Get court assignment for this round
           const courtAssignment = getCourtForRound();
-
-          if (!courtAssignment.courtId || !courtAssignment.timeSlotId) {
-            console.error(`ERROR: Invalid court assignment for round ${round}, pos ${position}`);
-          }
 
           const game = await prisma.game.create({
             data: {
@@ -347,8 +279,6 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log(`R${round} G${position}: home=${homeTeamId ? 'set' : 'TBD'}, away=${awayTeamId ? 'set' : 'TBD'}`);
-
           roundGames.push({ id: game.id, position });
           totalGames++;
         }
@@ -356,40 +286,8 @@ export async function POST(request: NextRequest) {
         gamesByRound.set(round, roundGames);
       }
 
-      // Link R1 games to R2 games based on r2Sources
-      const r1Games = gamesByRound.get(1) || [];
-      const r2Games = gamesByRound.get(2) || [];
-
-      for (let r2Pos = 0; r2Pos < r2Sources.length; r2Pos++) {
-        const source = r2Sources[r2Pos];
-        const r2Game = r2Games[r2Pos];
-        if (!r2Game) continue;
-
-        // Link R1 game to home slot
-        if (source.homeSource.type === 'r1' && source.homeSource.r1Position !== undefined) {
-          const r1Game = r1Games[source.homeSource.r1Position];
-          if (r1Game) {
-            await prisma.game.update({
-              where: { id: r1Game.id },
-              data: { nextGameId: r2Game.id, nextGamePosition: 'home' },
-            });
-          }
-        }
-
-        // Link R1 game to away slot
-        if (source.awaySource.type === 'r1' && source.awaySource.r1Position !== undefined) {
-          const r1Game = r1Games[source.awaySource.r1Position];
-          if (r1Game) {
-            await prisma.game.update({
-              where: { id: r1Game.id },
-              data: { nextGameId: r2Game.id, nextGamePosition: 'away' },
-            });
-          }
-        }
-      }
-
-      // Link R2+ games to next rounds (standard bracket linking)
-      for (let round = 2; round < rounds; round++) {
+      // Link games: standard bracket linking (positions 0,1 -> next round pos 0; 2,3 -> pos 1; etc.)
+      for (let round = 1; round < rounds; round++) {
         const currentRoundGames = gamesByRound.get(round) || [];
         const nextRoundGames = gamesByRound.get(round + 1) || [];
 
@@ -413,9 +311,8 @@ export async function POST(request: NextRequest) {
         rounds,
         teams: numTeams,
         firstRoundGames: numFirstRoundGames,
-        teamsWithByes: numTeamsWithByes,
-        manualByes: actualManualByes,
-        naturalByes: naturalByes,
+        totalSlots,
+        byes: numByes,
         courtsUsed: allCourts.length,
         deletedOldGames: deletedByDate.count + deletedPlayoffs.count,
       });

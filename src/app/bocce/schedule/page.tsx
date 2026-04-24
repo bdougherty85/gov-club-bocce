@@ -951,64 +951,79 @@ export default function SchedulePage() {
                 .filter(d => tournamentData.divisionIds.includes(d.id))
                 .flatMap(d => d.teams);
               const numTeams = selectedTeams.length;
-              // Max R1 games = ceil(teams/2) so all teams can start in R1 (one bye game if odd)
-              const maxR1Games = Math.ceil(numTeams / 2);
-              const currentR1Games = tournamentData.firstRoundGames || maxR1Games;
-              // Teams playing = 2 per game, but cap at actual team count
-              const teamsPlayingR1 = Math.min(currentR1Games * 2, numTeams);
-              const teamsWithByes = numTeams - teamsPlayingR1;
-              // R1 bye games (games with only 1 team)
-              const r1ByeGames = (currentR1Games * 2) - teamsPlayingR1;
+
+              // Calculate power of 2 options for R1 games
+              // R1 games should be power of 2, and R1 slots (games*2) should be >= numTeams
+              const powerOf2Options: number[] = [];
+              for (let p = 1; p <= 64; p *= 2) {
+                if (p * 2 >= numTeams) {
+                  powerOf2Options.push(p);
+                }
+              }
+              // Also allow smaller brackets if user wants more byes
+              for (let p = 1; p <= 64; p *= 2) {
+                if (p * 2 < numTeams && !powerOf2Options.includes(p)) {
+                  powerOf2Options.unshift(p);
+                }
+              }
+              powerOf2Options.sort((a, b) => a - b);
+
+              const currentR1Games = tournamentData.firstRoundGames || powerOf2Options[powerOf2Options.length - 1] || 1;
+              const totalSlots = currentR1Games * 2;
+              const numByes = Math.max(0, totalSlots - numTeams);
+              const teamsWithOpponent = numTeams - numByes;
 
               return (
                 <div className="mt-4 pl-6 space-y-4">
-                  {/* First Round Games Slider */}
+                  {/* First Round Games Select */}
                   <div>
                     <label className="block text-sm font-medium text-foreground mb-2">
-                      First Round Games: {currentR1Games}
+                      First Round Games (power of 2)
                     </label>
-                    <input
-                      type="range"
-                      min={1}
-                      max={maxR1Games}
+                    <select
                       value={currentR1Games}
                       onChange={(e) => setTournamentData(prev => ({
                         ...prev,
                         firstRoundGames: parseInt(e.target.value),
-                        byeTeamIds: [], // Reset bye selections when changing R1 games
+                        byeTeamIds: [],
                       }))}
-                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                    />
-                    <div className="flex justify-between text-xs text-muted mt-1">
-                      <span>1 game (more byes)</span>
-                      <span>{maxR1Games} games (fewer byes)</span>
-                    </div>
+                      className="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      {powerOf2Options.map(p => {
+                        const slots = p * 2;
+                        const byes = Math.max(0, slots - numTeams);
+                        const needsMoreTeams = slots < numTeams;
+                        return (
+                          <option key={p} value={p} disabled={needsMoreTeams}>
+                            {p} games ({slots} slots){byes > 0 ? ` - ${byes} byes` : ''}{needsMoreTeams ? ' - need more teams' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
 
                   {/* Summary */}
                   <div className="p-3 bg-blue-50 rounded-lg text-sm">
                     <p className="font-medium text-blue-800">Bracket Summary:</p>
                     <ul className="text-blue-700 mt-1 space-y-0.5">
-                      <li>• {numTeams} teams total</li>
-                      <li>• Round 1: {currentR1Games} game{currentR1Games !== 1 ? 's' : ''}</li>
-                      {r1ByeGames > 0 && (
-                        <li>• {r1ByeGames} R1 bye game{r1ByeGames !== 1 ? 's' : ''} (team auto-advances)</li>
-                      )}
-                      {teamsWithByes > 0 && (
-                        <li>• {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} skip to Round 2</li>
+                      <li>• {numTeams} teams</li>
+                      <li>• {currentR1Games} Round 1 games ({totalSlots} slots)</li>
+                      <li>• {teamsWithOpponent} teams play a match</li>
+                      {numByes > 0 && (
+                        <li>• {numByes} teams get a bye (vs TBD)</li>
                       )}
                     </ul>
                   </div>
 
                   {/* Bye Team Selection */}
-                  {teamsWithByes > 0 && (
+                  {numByes > 0 && (
                     <div>
                       <label className="block text-sm font-medium text-foreground mb-2">
-                        Select {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} for byes:
+                        Select teams for byes (optional):
                       </label>
                       <p className="text-xs text-muted mb-2">
-                        {tournamentData.byeTeamIds.length} of {teamsWithByes} selected.
-                        {tournamentData.byeTeamIds.length < teamsWithByes && ' Remaining byes will be assigned automatically.'}
+                        {tournamentData.byeTeamIds.length} of {numByes} selected.
+                        {tournamentData.byeTeamIds.length < numByes && ' Remaining byes assigned automatically.'}
                       </p>
                       <div className="space-y-2 max-h-36 overflow-y-auto">
                         {selectedTeams.map(team => (
@@ -1026,9 +1041,8 @@ export default function SchedulePage() {
                               onChange={(e) => {
                                 setTournamentData(prev => {
                                   if (e.target.checked) {
-                                    // Only allow up to teamsWithByes selections
-                                    if (prev.byeTeamIds.length >= teamsWithByes) {
-                                      toast.error(`Only ${teamsWithByes} bye${teamsWithByes !== 1 ? 's' : ''} available`);
+                                    if (prev.byeTeamIds.length >= numByes) {
+                                      toast.error(`Only ${numByes} bye${numByes !== 1 ? 's' : ''} available`);
                                       return prev;
                                     }
                                     return { ...prev, byeTeamIds: [...prev.byeTeamIds, team.id] };
