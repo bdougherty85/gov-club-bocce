@@ -9,6 +9,8 @@ export async function POST(request: NextRequest) {
       tournamentDate,
       timeSlotIds,
       format = 'single_elimination',
+      byeTeamIds = [],
+      firstRoundGames = 0, // 0 = auto-calculate
     } = body;
 
     const divisionIdList = divisionIds || (body.divisionId ? [body.divisionId] : []);
@@ -155,67 +157,129 @@ export async function POST(request: NextRequest) {
     if (format === 'single_elimination') {
       const numTeams = allTeams.length;
 
-      // With N teams, we need exactly N-1 games total
-      // First round: ALL teams play. If N is even, N/2 games. If N is odd, (N-1)/2 full games + 1 bye
-      const numFirstRoundGames = Math.ceil(numTeams / 2);
-      const hasBye = numTeams % 2 === 1;
+      // Use specified first round games or calculate max (all teams play)
+      const maxR1Games = Math.floor(numTeams / 2);
+      const numFirstRoundGames = firstRoundGames > 0
+        ? Math.min(firstRoundGames, maxR1Games)
+        : maxR1Games;
 
-      // Calculate total rounds needed
-      // After round 1: ceil(N/2) winners advance
-      // Round 2: ceil(ceil(N/2)/2) games, etc.
+      // Teams playing in R1 vs getting byes
+      const numTeamsPlayingR1 = numFirstRoundGames * 2;
+      const numTeamsWithByes = numTeams - numTeamsPlayingR1;
+
+      // Determine which teams get byes (prioritize manually selected)
+      const manualByeTeams = allTeams.filter(t => byeTeamIds.includes(t.id));
+      const otherTeams = allTeams.filter(t => !byeTeamIds.includes(t.id));
+
+      // Assign byes: manual selections first, then from end of other teams list
+      const actualManualByes = Math.min(manualByeTeams.length, numTeamsWithByes);
+      const naturalByes = numTeamsWithByes - actualManualByes;
+
+      const teamsWithByes = [
+        ...manualByeTeams.slice(0, actualManualByes),
+        ...otherTeams.slice(otherTeams.length - naturalByes),
+      ];
+      const teamsPlayingRound1 = [
+        ...manualByeTeams.slice(actualManualByes), // Manual selections that exceeded bye limit
+        ...otherTeams.slice(0, otherTeams.length - naturalByes),
+      ];
+
+      // Calculate rounds needed
+      // After R1: numFirstRoundGames winners + numTeamsWithByes = numTeams - numFirstRoundGames teams
+      // Keep halving until we get to 1
+      let teamsRemaining = numFirstRoundGames + numTeamsWithByes; // Teams after R1
       let rounds = 1;
-      let winnersFromPrevRound = numFirstRoundGames;
-      while (winnersFromPrevRound > 1) {
-        winnersFromPrevRound = Math.ceil(winnersFromPrevRound / 2);
+      while (teamsRemaining > 1) {
+        teamsRemaining = Math.ceil(teamsRemaining / 2);
         rounds++;
       }
 
-      console.log(`Creating bracket: ${numTeams} teams, ${numFirstRoundGames} first-round games, ${rounds} rounds, hasBye: ${hasBye}`);
+      console.log(`Creating bracket: ${numTeams} teams`);
+      console.log(`R1: ${numFirstRoundGames} games (${numTeamsPlayingR1} teams play)`);
+      console.log(`Byes: ${numTeamsWithByes} (${actualManualByes} manual, ${naturalByes} auto)`);
+      console.log(`Teams with byes:`, teamsWithByes.map(t => t.name));
+      console.log(`Teams playing R1:`, teamsPlayingRound1.map(t => t.name));
+      console.log(`Total rounds: ${rounds}`);
 
-      // Simple algorithm: traverse teams and fill game slots
-      // Game 1: Team 0 vs Team 1
-      // Game 2: Team 2 vs Team 3
-      // Game N: Team X vs Team X+1 (or bye if odd)
       interface Matchup {
         homeTeamId: string;
         awayTeamId: string | null;
         position: number;
       }
 
+      // Create first round matchups
       const firstRoundMatchups: Matchup[] = [];
-      let teamIndex = 0;
-
-      for (let gamePos = 0; gamePos < numFirstRoundGames; gamePos++) {
-        const homeTeam = allTeams[teamIndex];
-        teamIndex++;
-
-        const awayTeam = teamIndex < numTeams ? allTeams[teamIndex] : null;
-        if (awayTeam) teamIndex++;
-
+      for (let i = 0; i < teamsPlayingRound1.length; i += 2) {
         firstRoundMatchups.push({
-          homeTeamId: homeTeam.id,
-          awayTeamId: awayTeam?.id || null,
-          position: gamePos,
+          homeTeamId: teamsPlayingRound1[i].id,
+          awayTeamId: teamsPlayingRound1[i + 1]?.id || null,
+          position: firstRoundMatchups.length,
         });
       }
 
       console.log('First round matchups:', firstRoundMatchups.map(m => ({
+        pos: m.position,
         home: allTeams.find(t => t.id === m.homeTeamId)?.name,
         away: m.awayTeamId ? allTeams.find(t => t.id === m.awayTeamId)?.name : 'BYE',
       })));
 
-      // Calculate games per round
+      // Calculate games per round based on teams advancing
       const gamesPerRound: number[] = [0]; // index 0 unused
-      let g = numFirstRoundGames;
-      for (let r = 1; r <= rounds; r++) {
-        gamesPerRound.push(g);
-        g = Math.ceil(g / 2);
+      gamesPerRound.push(numFirstRoundGames); // Round 1
+
+      let teamsInRound = numFirstRoundGames + numTeamsWithByes; // Teams after R1
+      for (let r = 2; r <= rounds; r++) {
+        const gamesThisRound = Math.ceil(teamsInRound / 2);
+        gamesPerRound.push(gamesThisRound);
+        teamsInRound = gamesThisRound; // Winners advance to next round
       }
       console.log('Games per round:', gamesPerRound);
 
       // Create all games
       const gamesByRound: Map<number, { id: string; position: number }[]> = new Map();
       let totalGames = 0;
+
+      // Round 2 receives R1 winners + bye teams
+      // Calculate which R2 positions get bye teams vs R1 winners
+      const numR2Games = gamesPerRound[2] || 0;
+
+      // Map R2 game positions to their sources
+      // Each R2 game can have: 2 R1 winners, 1 R1 winner + 1 bye, or 2 byes
+      interface R2Source {
+        homeSource: { type: 'r1' | 'bye'; r1Position?: number; byeTeam?: typeof teamsWithByes[0] };
+        awaySource: { type: 'r1' | 'bye'; r1Position?: number; byeTeam?: typeof teamsWithByes[0] };
+      }
+      const r2Sources: R2Source[] = [];
+
+      let r1PositionCounter = 0;
+      let byeTeamIndex = 0;
+
+      for (let r2Pos = 0; r2Pos < numR2Games; r2Pos++) {
+        // Each R2 game needs 2 sources (home slot and away slot)
+        const sources: R2Source = { homeSource: { type: 'bye' }, awaySource: { type: 'bye' } };
+
+        // Home slot (corresponds to R1 positions 2*r2Pos)
+        if (r1PositionCounter < numFirstRoundGames) {
+          sources.homeSource = { type: 'r1', r1Position: r1PositionCounter++ };
+        } else if (byeTeamIndex < teamsWithByes.length) {
+          sources.homeSource = { type: 'bye', byeTeam: teamsWithByes[byeTeamIndex++] };
+        }
+
+        // Away slot (corresponds to R1 positions 2*r2Pos + 1)
+        if (r1PositionCounter < numFirstRoundGames) {
+          sources.awaySource = { type: 'r1', r1Position: r1PositionCounter++ };
+        } else if (byeTeamIndex < teamsWithByes.length) {
+          sources.awaySource = { type: 'bye', byeTeam: teamsWithByes[byeTeamIndex++] };
+        }
+
+        r2Sources.push(sources);
+      }
+
+      console.log('R2 sources:', r2Sources.map((s, i) => ({
+        r2Pos: i,
+        home: s.homeSource.type === 'bye' ? `BYE:${s.homeSource.byeTeam?.name}` : `R1:${s.homeSource.r1Position}`,
+        away: s.awaySource.type === 'bye' ? `BYE:${s.awaySource.byeTeam?.name}` : `R1:${s.awaySource.r1Position}`,
+      })));
 
       for (let round = 1; round <= rounds; round++) {
         const numGamesThisRound = gamesPerRound[round];
@@ -235,8 +299,17 @@ export async function POST(request: NextRequest) {
               homeTeamId = matchup.homeTeamId;
               awayTeamId = matchup.awayTeamId;
             }
+          } else if (round === 2) {
+            // Round 2 - place bye teams directly
+            const source = r2Sources[position];
+            if (source?.homeSource.type === 'bye' && source.homeSource.byeTeam) {
+              homeTeamId = source.homeSource.byeTeam.id;
+            }
+            if (source?.awaySource.type === 'bye' && source.awaySource.byeTeam) {
+              awayTeamId = source.awaySource.byeTeam.id;
+            }
           }
-          // Later rounds: teams TBD (null) until previous round completes
+          // Rounds 3+: teams TBD until previous round completes
 
           // Get court assignment for this round
           const courtAssignment = getCourtForRound();
@@ -260,8 +333,7 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // Verify court was saved
-          console.log(`Round ${round} Game ${position}: courtId=${courtAssignment.courtId}, saved=${game.courtId}`);
+          console.log(`R${round} G${position}: home=${homeTeamId ? 'set' : 'TBD'}, away=${awayTeamId ? 'set' : 'TBD'}`);
 
           roundGames.push({ id: game.id, position });
           totalGames++;
@@ -270,8 +342,40 @@ export async function POST(request: NextRequest) {
         gamesByRound.set(round, roundGames);
       }
 
-      // Link games to next round (winner advances)
-      for (let round = 1; round < rounds; round++) {
+      // Link R1 games to R2 games based on r2Sources
+      const r1Games = gamesByRound.get(1) || [];
+      const r2Games = gamesByRound.get(2) || [];
+
+      for (let r2Pos = 0; r2Pos < r2Sources.length; r2Pos++) {
+        const source = r2Sources[r2Pos];
+        const r2Game = r2Games[r2Pos];
+        if (!r2Game) continue;
+
+        // Link R1 game to home slot
+        if (source.homeSource.type === 'r1' && source.homeSource.r1Position !== undefined) {
+          const r1Game = r1Games[source.homeSource.r1Position];
+          if (r1Game) {
+            await prisma.game.update({
+              where: { id: r1Game.id },
+              data: { nextGameId: r2Game.id, nextGamePosition: 'home' },
+            });
+          }
+        }
+
+        // Link R1 game to away slot
+        if (source.awaySource.type === 'r1' && source.awaySource.r1Position !== undefined) {
+          const r1Game = r1Games[source.awaySource.r1Position];
+          if (r1Game) {
+            await prisma.game.update({
+              where: { id: r1Game.id },
+              data: { nextGameId: r2Game.id, nextGamePosition: 'away' },
+            });
+          }
+        }
+      }
+
+      // Link R2+ games to next rounds (standard bracket linking)
+      for (let round = 2; round < rounds; round++) {
         const currentRoundGames = gamesByRound.get(round) || [];
         const nextRoundGames = gamesByRound.get(round + 1) || [];
 
@@ -283,36 +387,9 @@ export async function POST(request: NextRequest) {
           if (nextGame) {
             await prisma.game.update({
               where: { id: game.id },
-              data: {
-                nextGameId: nextGame.id,
-                nextGamePosition,
-              },
+              data: { nextGameId: nextGame.id, nextGamePosition },
             });
           }
-        }
-      }
-
-      // Auto-advance bye games (games where awayTeamId is null)
-      const firstRoundGameRefs = gamesByRound.get(1) || [];
-      for (const gameRef of firstRoundGameRefs) {
-        const game = await prisma.game.findUnique({
-          where: { id: gameRef.id },
-        });
-
-        if (game && game.homeTeamId && !game.awayTeamId && game.nextGameId) {
-          // This is a bye - auto-complete and advance
-          await prisma.game.update({
-            where: { id: game.id },
-            data: { status: 'completed', homeScore: 1, awayScore: 0 },
-          });
-
-          const updateField = game.nextGamePosition === 'home' ? 'homeTeamId' : 'awayTeamId';
-          await prisma.game.update({
-            where: { id: game.nextGameId },
-            data: { [updateField]: game.homeTeamId },
-          });
-
-          console.log(`Auto-advanced bye: team ${game.homeTeamId} to next game`);
         }
       }
 
@@ -322,7 +399,9 @@ export async function POST(request: NextRequest) {
         rounds,
         teams: numTeams,
         firstRoundGames: numFirstRoundGames,
-        hasBye,
+        teamsWithByes: numTeamsWithByes,
+        manualByes: actualManualByes,
+        naturalByes: naturalByes,
         courtsUsed: allCourts.length,
         deletedOldGames: deletedByDate.count + deletedPlayoffs.count,
       });

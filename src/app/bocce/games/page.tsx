@@ -80,6 +80,14 @@ export default function GamesPage() {
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [editBracketModalOpen, setEditBracketModalOpen] = useState(false);
+  const [editingBracketGame, setEditingBracketGame] = useState<Game | null>(null);
+  const [bracketEditFormData, setBracketEditFormData] = useState({
+    courtId: '',
+    timeSlotId: '',
+    homeTeamId: '',
+    awayTeamId: '',
+  });
 
   const fetchGames = async () => {
     try {
@@ -366,6 +374,47 @@ export default function GamesPage() {
     }
   };
 
+  const handleEditBracketGame = (bracketGame: { id: string; homeTeam: { id: string; name: string } | null; awayTeam: { id: string; name: string } | null }) => {
+    const game = games.find(g => g.id === bracketGame.id);
+    if (!game) return;
+
+    setEditingBracketGame(game);
+    setBracketEditFormData({
+      courtId: game.court?.id || '',
+      timeSlotId: game.timeSlot?.id || '',
+      homeTeamId: game.homeTeam?.id || '',
+      awayTeamId: game.awayTeam?.id || '',
+    });
+    setEditBracketModalOpen(true);
+  };
+
+  const handleSaveBracketEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBracketGame) return;
+
+    try {
+      const res = await fetch(`/api/games/${editingBracketGame.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courtId: bracketEditFormData.courtId || null,
+          timeSlotId: bracketEditFormData.timeSlotId || null,
+          homeTeamId: bracketEditFormData.homeTeamId || null,
+          awayTeamId: bracketEditFormData.awayTeamId || null,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update game');
+
+      toast.success('Game updated');
+      setEditBracketModalOpen(false);
+      setEditingBracketGame(null);
+      fetchGames();
+    } catch (error) {
+      toast.error('Failed to update game');
+    }
+  };
+
   const filteredGames = games.filter((game) => {
     if (filter === 'all') return true;
     if (filter === 'scheduled') return game.status === 'scheduled';
@@ -483,6 +532,7 @@ export default function GamesPage() {
             }))}
             onSelectWinner={handleSelectWinner}
             onClearWinner={handleClearWinner}
+            onEditGame={handleEditBracketGame}
           />
         </Card>
       ) : (
@@ -786,6 +836,66 @@ export default function GamesPage() {
               Cancel
             </Button>
             <Button type="submit">Create Game</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Bracket Game Modal */}
+      <Modal
+        isOpen={editBracketModalOpen}
+        onClose={() => {
+          setEditBracketModalOpen(false);
+          setEditingBracketGame(null);
+        }}
+        title="Edit Bracket Game"
+      >
+        <form onSubmit={handleSaveBracketEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Court"
+              value={bracketEditFormData.courtId}
+              onChange={(e) => setBracketEditFormData({ ...bracketEditFormData, courtId: e.target.value })}
+              options={[
+                { value: '', label: 'Select court...' },
+                ...courts.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <Select
+              label="Time Slot"
+              value={bracketEditFormData.timeSlotId}
+              onChange={(e) => setBracketEditFormData({ ...bracketEditFormData, timeSlotId: e.target.value })}
+              options={[
+                { value: '', label: 'Select time...' },
+                ...timeSlots.map((ts) => ({ value: ts.id, label: ts.startTime })),
+              ]}
+            />
+          </div>
+
+          <Select
+            label="Home Team"
+            value={bracketEditFormData.homeTeamId}
+            onChange={(e) => setBracketEditFormData({ ...bracketEditFormData, homeTeamId: e.target.value })}
+            options={[
+              { value: '', label: 'TBD' },
+              ...teams.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
+
+          <Select
+            label="Away Team"
+            value={bracketEditFormData.awayTeamId}
+            onChange={(e) => setBracketEditFormData({ ...bracketEditFormData, awayTeamId: e.target.value })}
+            options={[
+              { value: '', label: 'TBD (or Bye)' },
+              ...teams.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button type="button" variant="outline" onClick={() => setEditBracketModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Save Changes</Button>
           </div>
         </form>
       </Modal>

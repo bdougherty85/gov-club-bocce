@@ -24,11 +24,12 @@ interface BracketProps {
   games: BracketGame[];
   onSelectWinner?: (gameId: string, winnerId: string) => void;
   onClearWinner?: (gameId: string) => void;
+  onEditGame?: (game: BracketGame) => void;
   compact?: boolean;
   showControls?: boolean;
 }
 
-export default function Bracket({ games, onSelectWinner, onClearWinner, compact = false, showControls = true }: BracketProps) {
+export default function Bracket({ games, onSelectWinner, onClearWinner, onEditGame, compact = false, showControls = true }: BracketProps) {
   if (games.length === 0) {
     return (
       <div className="text-center py-8 text-muted">
@@ -229,7 +230,7 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
               return (
                 <div
                   key={game.id}
-                  className="absolute"
+                  className="absolute group"
                   style={{
                     left: `${roundX}px`,
                     top: `${y}px`,
@@ -237,11 +238,24 @@ export default function Bracket({ games, onSelectWinner, onClearWinner, compact 
                     height: `${matchupHeight}px`,
                   }}
                 >
-                  <div className="h-full bg-white border border-gray-300 rounded shadow-sm overflow-hidden flex flex-col">
-                    {/* Court & Time header */}
+                  <div className="h-full bg-white border border-gray-300 rounded shadow-sm overflow-hidden flex flex-col relative">
+                    {/* Court & Time header with Edit button */}
                     <div className={`flex justify-between items-center bg-gray-100 border-b border-gray-200 ${compact ? 'px-1 py-0.5 text-[9px]' : 'px-2 py-0.5 text-[10px]'} text-gray-500`}>
                       <span className="font-medium">{game.court?.name || 'No Court'}</span>
-                      <span>{game.timeSlot?.startTime || ''}</span>
+                      <div className="flex items-center gap-1">
+                        <span>{game.timeSlot?.startTime || ''}</span>
+                        {onEditGame && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditGame(game);
+                            }}
+                            className="ml-1 px-1.5 py-0.5 bg-blue-500 text-white text-[9px] font-medium rounded hover:bg-blue-600"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Home team */}

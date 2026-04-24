@@ -87,10 +87,36 @@ export default function SchedulePage() {
     timeSlotIds: [] as string[],
     format: 'pool_and_playoffs' as 'pool_and_playoffs' | 'single_elimination',
     teamsInPlayoffs: 4,
+    byeTeamIds: [] as string[],
+    firstRoundGames: 0, // 0 = auto-calculate
   });
   const [games, setGames] = useState<Game[]>([]);
   const [scheduleViewMode, setScheduleViewMode] = useState<'schedule' | 'bracket'>('schedule');
   const [selectedDate, setSelectedDate] = useState<string>('');
+  const [editGameModalOpen, setEditGameModalOpen] = useState(false);
+  const [addGameModalOpen, setAddGameModalOpen] = useState(false);
+  const [editingGame, setEditingGame] = useState<Game | null>(null);
+  const [gameFormData, setGameFormData] = useState({
+    courtId: '',
+    timeSlotId: '',
+    homeTeamId: '',
+    awayTeamId: '',
+    isBye: false,
+  });
+  const [newGameData, setNewGameData] = useState({
+    courtId: '',
+    timeSlotId: '',
+    homeTeamId: '',
+    awayTeamId: '',
+    isBye: false,
+    playoffRound: 1,
+    playoffPosition: 0,
+    linkToGameId: '',
+    linkPosition: 'home' as 'home' | 'away',
+  });
+
+  // Get all teams from all divisions for dropdowns
+  const allTeams = divisions.flatMap(d => d.teams);
 
   const fetchData = async () => {
     try {
@@ -268,6 +294,8 @@ export default function SchedulePage() {
         timeSlotIds: [],
         format: 'pool_and_playoffs',
         teamsInPlayoffs: 4,
+        byeTeamIds: [],
+        firstRoundGames: 0,
       });
       // Refresh games to show newly created tournament
       fetchData();
@@ -292,6 +320,111 @@ export default function SchedulePage() {
         ? []
         : divisions.map((d) => d.id),
     }));
+  };
+
+  // Open edit game modal
+  const openEditGame = (game: Game) => {
+    setEditingGame(game);
+    setGameFormData({
+      courtId: game.court?.id || '',
+      timeSlotId: game.timeSlot?.id || '',
+      homeTeamId: game.homeTeam?.id || '',
+      awayTeamId: game.awayTeam?.id || '',
+      isBye: !game.awayTeam,
+    });
+    setEditGameModalOpen(true);
+  };
+
+  // Save game edits
+  const handleSaveGame = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGame) return;
+
+    try {
+      const res = await fetch(`/api/games/${editingGame.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          courtId: gameFormData.courtId || null,
+          timeSlotId: gameFormData.timeSlotId || null,
+          homeTeamId: gameFormData.homeTeamId || null,
+          awayTeamId: gameFormData.isBye ? null : (gameFormData.awayTeamId || null),
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update game');
+
+      toast.success('Game updated!');
+      setEditGameModalOpen(false);
+      setEditingGame(null);
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to update game');
+    }
+  };
+
+  // Add new game to bracket
+  const handleAddGame = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Get seasonId from existing games
+    const seasonId = games[0]?.homeTeam?.id ?
+      (await fetch(`/api/games/${games[0].id}`).then(r => r.json())).seasonId : null;
+
+    if (!seasonId) {
+      toast.error('No season found. Create a tournament first.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/games', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seasonId,
+          homeTeamId: newGameData.homeTeamId || null,
+          awayTeamId: newGameData.isBye ? null : (newGameData.awayTeamId || null),
+          scheduledDate: selectedDate || new Date().toISOString().split('T')[0],
+          courtId: newGameData.courtId || null,
+          timeSlotId: newGameData.timeSlotId || null,
+          isPlayoff: true,
+          playoffRound: newGameData.playoffRound,
+          playoffPosition: newGameData.playoffPosition,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to create game');
+      const newGame = await res.json();
+
+      // Link to existing game if specified
+      if (newGameData.linkToGameId) {
+        await fetch(`/api/games/${newGame.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nextGameId: newGameData.linkToGameId,
+            nextGamePosition: newGameData.linkPosition,
+          }),
+        });
+      }
+
+      toast.success('Game added to bracket!');
+      setAddGameModalOpen(false);
+      setNewGameData({
+        courtId: '',
+        timeSlotId: '',
+        homeTeamId: '',
+        awayTeamId: '',
+        isBye: false,
+        playoffRound: 1,
+        playoffPosition: 0,
+        linkToGameId: '',
+        linkPosition: 'home',
+      });
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to add game');
+    }
   };
 
   const toggleTournamentTimeSlot = (slotId: string) => {
@@ -506,16 +639,25 @@ export default function SchedulePage() {
                     Bracket
                   </button>
                 </div>
+
+                {/* Add Game button for bracket view */}
+                {scheduleViewMode === 'bracket' && (
+                  <Button size="sm" variant="outline" onClick={() => setAddGameModalOpen(true)}>
+                    + Add Game
+                  </Button>
+                )}
               </div>
             </div>
 
             {scheduleViewMode === 'schedule' ? (
               <ScheduleListView
                 games={games.filter(g => !selectedDate || g.scheduledDate.startsWith(selectedDate))}
+                onEditGame={openEditGame}
               />
             ) : (
               <BracketView
                 games={games.filter(g => g.isPlayoff && (!selectedDate || g.scheduledDate.startsWith(selectedDate)))}
+                onEditGame={openEditGame}
               />
             )}
           </Card>
@@ -802,6 +944,101 @@ export default function SchedulePage() {
                 />
               </div>
             )}
+
+            {/* Bracket Configuration for Single Elimination */}
+            {tournamentData.format === 'single_elimination' && tournamentData.divisionIds.length > 0 && (() => {
+              const selectedTeams = divisions
+                .filter(d => tournamentData.divisionIds.includes(d.id))
+                .flatMap(d => d.teams);
+              const numTeams = selectedTeams.length;
+              const maxR1Games = Math.floor(numTeams / 2);
+              const currentR1Games = tournamentData.firstRoundGames || maxR1Games;
+              const teamsPlayingR1 = currentR1Games * 2;
+              const teamsWithByes = numTeams - teamsPlayingR1;
+
+              return (
+                <div className="mt-4 pl-6 space-y-4">
+                  {/* First Round Games Slider */}
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">
+                      First Round Games: {currentR1Games}
+                    </label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={maxR1Games}
+                      value={currentR1Games}
+                      onChange={(e) => setTournamentData(prev => ({
+                        ...prev,
+                        firstRoundGames: parseInt(e.target.value),
+                        byeTeamIds: [], // Reset bye selections when changing R1 games
+                      }))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-xs text-muted mt-1">
+                      <span>1 game (more byes)</span>
+                      <span>{maxR1Games} games (fewer byes)</span>
+                    </div>
+                  </div>
+
+                  {/* Summary */}
+                  <div className="p-3 bg-blue-50 rounded-lg text-sm">
+                    <p className="font-medium text-blue-800">Bracket Summary:</p>
+                    <ul className="text-blue-700 mt-1 space-y-0.5">
+                      <li>• {numTeams} teams total</li>
+                      <li>• {teamsPlayingR1} teams play in Round 1 ({currentR1Games} games)</li>
+                      <li>• {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} get a bye to Round 2</li>
+                    </ul>
+                  </div>
+
+                  {/* Bye Team Selection */}
+                  {teamsWithByes > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium text-foreground mb-2">
+                        Select {teamsWithByes} team{teamsWithByes !== 1 ? 's' : ''} for byes:
+                      </label>
+                      <p className="text-xs text-muted mb-2">
+                        {tournamentData.byeTeamIds.length} of {teamsWithByes} selected.
+                        {tournamentData.byeTeamIds.length < teamsWithByes && ' Remaining byes will be assigned automatically.'}
+                      </p>
+                      <div className="space-y-2 max-h-36 overflow-y-auto">
+                        {selectedTeams.map(team => (
+                          <label
+                            key={team.id}
+                            className={`flex items-center space-x-3 p-2 rounded cursor-pointer ${
+                              tournamentData.byeTeamIds.includes(team.id)
+                                ? 'bg-green-100 hover:bg-green-200'
+                                : 'bg-gray-50 hover:bg-gray-100'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={tournamentData.byeTeamIds.includes(team.id)}
+                              onChange={(e) => {
+                                setTournamentData(prev => {
+                                  if (e.target.checked) {
+                                    // Only allow up to teamsWithByes selections
+                                    if (prev.byeTeamIds.length >= teamsWithByes) {
+                                      toast.error(`Only ${teamsWithByes} bye${teamsWithByes !== 1 ? 's' : ''} available`);
+                                      return prev;
+                                    }
+                                    return { ...prev, byeTeamIds: [...prev.byeTeamIds, team.id] };
+                                  } else {
+                                    return { ...prev, byeTeamIds: prev.byeTeamIds.filter(id => id !== team.id) };
+                                  }
+                                });
+                              }}
+                              className="rounded border-border text-primary focus:ring-primary"
+                            />
+                            <span className="text-sm text-foreground">{team.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="flex justify-end space-x-3 pt-4">
@@ -814,12 +1051,204 @@ export default function SchedulePage() {
           </div>
         </form>
       </Modal>
+
+      {/* Edit Game Modal */}
+      <Modal
+        isOpen={editGameModalOpen}
+        onClose={() => {
+          setEditGameModalOpen(false);
+          setEditingGame(null);
+        }}
+        title="Edit Game"
+      >
+        <form onSubmit={handleSaveGame} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Court"
+              value={gameFormData.courtId}
+              onChange={(e) => setGameFormData({ ...gameFormData, courtId: e.target.value })}
+              options={[
+                { value: '', label: 'Select court...' },
+                ...courts.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <Select
+              label="Time Slot"
+              value={gameFormData.timeSlotId}
+              onChange={(e) => setGameFormData({ ...gameFormData, timeSlotId: e.target.value })}
+              options={[
+                { value: '', label: 'Select time...' },
+                ...timeSlots.map((ts) => ({ value: ts.id, label: ts.startTime })),
+              ]}
+            />
+          </div>
+
+          <Select
+            label="Home Team"
+            value={gameFormData.homeTeamId}
+            onChange={(e) => setGameFormData({ ...gameFormData, homeTeamId: e.target.value })}
+            options={[
+              { value: '', label: 'TBD' },
+              ...allTeams.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="isBye"
+              checked={gameFormData.isBye}
+              onChange={(e) => setGameFormData({ ...gameFormData, isBye: e.target.checked })}
+              className="w-4 h-4 rounded border-border"
+            />
+            <label htmlFor="isBye" className="text-sm font-medium text-foreground">
+              This is a BYE (no opponent)
+            </label>
+          </div>
+
+          {!gameFormData.isBye && (
+            <Select
+              label="Away Team"
+              value={gameFormData.awayTeamId}
+              onChange={(e) => setGameFormData({ ...gameFormData, awayTeamId: e.target.value })}
+              options={[
+                { value: '', label: 'TBD' },
+                ...allTeams.map((t) => ({ value: t.id, label: t.name })),
+              ]}
+            />
+          )}
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button type="button" variant="outline" onClick={() => setEditGameModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Save Changes</Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Game Modal */}
+      <Modal
+        isOpen={addGameModalOpen}
+        onClose={() => setAddGameModalOpen(false)}
+        title="Add Game to Bracket"
+      >
+        <form onSubmit={handleAddGame} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Playoff Round"
+              type="number"
+              min={1}
+              value={newGameData.playoffRound}
+              onChange={(e) => setNewGameData({ ...newGameData, playoffRound: parseInt(e.target.value) || 1 })}
+            />
+            <Input
+              label="Position in Round"
+              type="number"
+              min={0}
+              value={newGameData.playoffPosition}
+              onChange={(e) => setNewGameData({ ...newGameData, playoffPosition: parseInt(e.target.value) || 0 })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="Court"
+              value={newGameData.courtId}
+              onChange={(e) => setNewGameData({ ...newGameData, courtId: e.target.value })}
+              options={[
+                { value: '', label: 'Select court...' },
+                ...courts.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+            <Select
+              label="Time Slot"
+              value={newGameData.timeSlotId}
+              onChange={(e) => setNewGameData({ ...newGameData, timeSlotId: e.target.value })}
+              options={[
+                { value: '', label: 'Select time...' },
+                ...timeSlots.map((ts) => ({ value: ts.id, label: ts.startTime })),
+              ]}
+            />
+          </div>
+
+          <Select
+            label="Home Team"
+            value={newGameData.homeTeamId}
+            onChange={(e) => setNewGameData({ ...newGameData, homeTeamId: e.target.value })}
+            options={[
+              { value: '', label: 'TBD' },
+              ...allTeams.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+          />
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="newGameBye"
+              checked={newGameData.isBye}
+              onChange={(e) => setNewGameData({ ...newGameData, isBye: e.target.checked })}
+              className="w-4 h-4 rounded border-border"
+            />
+            <label htmlFor="newGameBye" className="text-sm font-medium text-foreground">
+              This is a BYE
+            </label>
+          </div>
+
+          {!newGameData.isBye && (
+            <Select
+              label="Away Team"
+              value={newGameData.awayTeamId}
+              onChange={(e) => setNewGameData({ ...newGameData, awayTeamId: e.target.value })}
+              options={[
+                { value: '', label: 'TBD' },
+                ...allTeams.map((t) => ({ value: t.id, label: t.name })),
+              ]}
+            />
+          )}
+
+          <div className="border-t pt-4 mt-4">
+            <h4 className="font-medium text-foreground mb-2">Link to Existing Game (Optional)</h4>
+            <p className="text-sm text-muted mb-3">Connect this game&apos;s winner to another game in the bracket</p>
+            <div className="grid grid-cols-2 gap-4">
+              <Select
+                label="Link to Game"
+                value={newGameData.linkToGameId}
+                onChange={(e) => setNewGameData({ ...newGameData, linkToGameId: e.target.value })}
+                options={[
+                  { value: '', label: 'No link' },
+                  ...games.filter(g => g.isPlayoff).map((g) => ({
+                    value: g.id,
+                    label: `R${g.playoffRound} G${(g.playoffPosition || 0) + 1}: ${g.homeTeam?.name || 'TBD'} vs ${g.awayTeam?.name || 'TBD'}`,
+                  })),
+                ]}
+              />
+              <Select
+                label="Winner Goes To"
+                value={newGameData.linkPosition}
+                onChange={(e) => setNewGameData({ ...newGameData, linkPosition: e.target.value as 'home' | 'away' })}
+                options={[
+                  { value: 'home', label: 'Home Team Slot' },
+                  { value: 'away', label: 'Away Team Slot' },
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button type="button" variant="outline" onClick={() => setAddGameModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Add Game</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
 
 // Schedule List View Component
-function ScheduleListView({ games }: { games: Game[] }) {
+function ScheduleListView({ games, onEditGame }: { games: Game[]; onEditGame: (game: Game) => void }) {
   if (games.length === 0) {
     return (
       <div className="text-center py-8 text-muted">
@@ -909,14 +1338,22 @@ function ScheduleListView({ games }: { games: Game[] }) {
                     )}
                   </div>
                 </div>
-                <div className="mt-2 text-xs text-muted">
-                  {game.status === 'scheduled' && 'Scheduled'}
-                  {game.status === 'in_progress' && (
-                    <span className="text-yellow-600 font-semibold">In Progress</span>
-                  )}
-                  {game.status === 'completed' && (
-                    <span className="text-green-600">Completed</span>
-                  )}
+                <div className="mt-2 flex justify-between items-center">
+                  <span className="text-xs text-muted">
+                    {game.status === 'scheduled' && 'Scheduled'}
+                    {game.status === 'in_progress' && (
+                      <span className="text-yellow-600 font-semibold">In Progress</span>
+                    )}
+                    {game.status === 'completed' && (
+                      <span className="text-green-600">Completed</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => onEditGame(game)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Edit
+                  </button>
                 </div>
               </div>
             ))}
@@ -928,7 +1365,7 @@ function ScheduleListView({ games }: { games: Game[] }) {
 }
 
 // Bracket View Component (wrapper)
-function BracketView({ games }: { games: Game[] }) {
+function BracketView({ games, onEditGame }: { games: Game[]; onEditGame?: (game: Game) => void }) {
   if (games.length === 0) {
     return (
       <div className="text-center py-8 text-muted">
@@ -936,6 +1373,12 @@ function BracketView({ games }: { games: Game[] }) {
       </div>
     );
   }
+
+  // Create a map of games by ID for the edit callback
+  const gamesById = games.reduce((acc, g) => {
+    acc[g.id] = g;
+    return acc;
+  }, {} as Record<string, Game>);
 
   return (
     <div className="overflow-x-auto">
@@ -955,6 +1398,10 @@ function BracketView({ games }: { games: Game[] }) {
           timeSlot: g.timeSlot ? { startTime: g.timeSlot.startTime } : null,
         }))}
         showControls={false}
+        onEditGame={onEditGame ? (bracketGame) => {
+          const fullGame = gamesById[bracketGame.id];
+          if (fullGame) onEditGame(fullGame);
+        } : undefined}
       />
     </div>
   );

@@ -68,6 +68,12 @@ export async function PUT(
       scheduledDate,
       timeSlotId,
       courtId,
+      homeTeamId,
+      awayTeamId,
+      nextGameId,
+      nextGamePosition,
+      playoffRound,
+      playoffPosition,
     } = body;
 
     // First get the current game to check if it's a playoff game
@@ -94,10 +100,18 @@ export async function PUT(
         scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
         timeSlotId,
         courtId,
+        homeTeamId,
+        awayTeamId,
+        nextGameId,
+        nextGamePosition,
+        playoffRound,
+        playoffPosition,
       },
       include: {
         homeTeam: true,
         awayTeam: true,
+        court: true,
+        timeSlot: true,
       },
     });
 
