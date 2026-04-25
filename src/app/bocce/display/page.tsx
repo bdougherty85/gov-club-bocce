@@ -110,8 +110,17 @@ export default function TVDisplayPage() {
         return gameDateStr === todayStr && game.status !== 'cancelled';
       });
 
+      // Also include playoff games with time slots (they might not have scheduledDate set correctly)
+      const playoffGamesWithSlots = gamesData.filter((game: Game) =>
+        game.isPlayoff && game.timeSlot && game.status !== 'cancelled'
+      );
+
+      // Merge with today's games (avoiding duplicates)
+      const todayGameIds = new Set(todayGames.map((g: Game) => g.id));
+      const additionalPlayoffs = playoffGamesWithSlots.filter((g: Game) => !todayGameIds.has(g.id));
+
       // If no games today, find the next scheduled date
-      let displayGames = todayGames;
+      let displayGames = [...todayGames, ...additionalPlayoffs];
       let displayDate = todayStr;
       let isToday = true;
 
