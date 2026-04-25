@@ -267,7 +267,7 @@ export default function TVDisplayPage() {
 
   return (
     <div
-      className="min-h-screen bg-gradient-to-br from-primary to-primary-dark text-white overflow-hidden cursor-pointer"
+      className="min-h-screen bg-primary text-white overflow-hidden cursor-pointer"
       onClick={advanceView}
     >
       {/* Header */}
@@ -422,7 +422,7 @@ function ScheduleView({
       <div className="flex-1 flex flex-col gap-6 overflow-auto">
         {/* Current Time Slot */}
         {currentSlotGames.length > 0 && (
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-6">
+          <div className="bg-black/40 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-3xl font-bold text-secondary">
                 {currentSlotTime || 'Current'}
@@ -461,7 +461,7 @@ function ScheduleView({
 
         {/* Next Time Slot */}
         {nextSlotGames.length > 0 && (
-          <div className="bg-white/5 backdrop-blur rounded-2xl p-6">
+          <div className="bg-black/30 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-2xl font-bold text-white/70">
                 Up Next: {nextSlotTime}
